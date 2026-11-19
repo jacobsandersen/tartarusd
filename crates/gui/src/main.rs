@@ -19,6 +19,7 @@ fn main() -> anyhow::Result<gtk::glib::ExitCode> {
     let dir = store::default_dir()?;
     let app = adw::Application::builder().application_id(APP_ID).build();
     app.connect_activate(move |app| {
+        gtk::Window::set_default_icon_name("tartarusd");
         if let Some(w) = app.active_window() {
             w.present();
             return;

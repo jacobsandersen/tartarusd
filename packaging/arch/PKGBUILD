@@ -95,4 +95,8 @@ package_tartarusd-gui-git() {
   install -Dm755 target/release/tartarusd-gui "$pkgdir/usr/bin/tartarusd-gui"
   sed 's|^Exec=.*|Exec=/usr/bin/tartarusd-gui|' packaging/tartarusd-gui.desktop |
     install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/org.tartarusd.Gui.desktop"
+  for size in 48 64 128 256 512; do
+    install -Dm644 "packaging/icons/hicolor/${size}x${size}/apps/tartarusd.png" \
+      "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/tartarusd.png"
+  done
 }

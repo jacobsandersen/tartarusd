@@ -64,6 +64,9 @@ if [ "$gui" = 1 ]; then
     apps=${XDG_DATA_HOME:-$HOME/.local/share}/applications
     mkdir -p "$apps"
     sed "s|^Exec=.*|Exec=$bin/tartarusd-gui|" packaging/tartarusd-gui.desktop > "$apps/org.tartarusd.Gui.desktop"
+    icons=${XDG_DATA_HOME:-$HOME/.local/share}/icons
+    mkdir -p "$icons"
+    cp -r packaging/icons/hicolor "$icons/"
 fi
 
 # The unit's ExecStart assumes ~/.local/bin; point it at the real location.
