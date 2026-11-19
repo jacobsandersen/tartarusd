@@ -276,6 +276,9 @@ hypershift_fallthrough = true
 
 ## Per-key lighting (per mode, per Hypershift layer)
 
+A layer's lighting is either per-key colors (this section) or one **firmware effect**
+(next section), never both.
+
 Each mode may carry a static RGB frame, and its Hypershift layer may carry its own. The
 state machine emits the frame to show whenever it can change: mode change, Hypershift
 enter/exit, profile swap.
@@ -315,6 +318,33 @@ KEY_1 = "#ff0000"
 - Static frames only in v1; firmware effects (wave/reactive/etc.) per mode can come later
   as an enum delegating to OpenRazer.
 
+## Firmware effects
+
+Instead of key colors, a mode or its Hypershift layer can run one of the pad's built-in
+effects. They cover the whole pad and are run by the firmware, so they cost nothing while
+running; they cannot be mixed with per-key colors or react to macros (a macro-driven
+animation was considered and dropped).
+
+```toml
+[mode.1.effect]                 # or [mode.1.hypershift_effect]
+type = "starlight"              # spectrum | wave | breathing | reactive | starlight
+colors = ["#ff00ff", "#00ffff"] # breathing, starlight: 0 (random), 1 or 2 colors
+speed = 2                       # reactive 1-4, starlight 1-3 (default 2)
+```
+
+- `wave` takes `direction = "left" | "right"` (the way it travels; default left).
+  `reactive` takes `color` and `speed`. `spectrum` takes nothing.
+- A layer sets `lighting` or `effect`, not both; a profile that sets both for the same layer
+  is rejected. Base and Hypershift may differ (colors on one, an effect on the other).
+- Ownership rules are the same as for frames: a profile with any lighting or effect owns the
+  pad, a mode with neither is dark, and Hypershift without its own keeps the mode's.
+- **Hand-back:** OpenRazer remembers the last effect it was given, and effect calls
+  overwrite it. Before its first effect call the daemon reads the configured effect and
+  sets it again when handing the pad back (profile without lighting, shutdown). Switching
+  to custom frames does not change the remembered effect. If the daemon is killed while an
+  effect is showing, OpenRazer keeps that effect as its own.
+- `docs/hardware.md` has the verified calls and argument order.
+
 ## D-Bus interface (`org.tartarusd.Daemon1`, session bus, `zbus`)
 
 ```
@@ -324,7 +354,7 @@ Methods:  ListProfiles() → as
           GetState() → (s profile, y mode, b pinned)
           SetMode(y)
           StartCapture() / StopCapture()
-          PreviewFrame(ay) / ClearPreview()
+          PreviewFrame(ay) / PreviewEffect(s) / ClearPreview()
 Signals:  ProfileChanged(s)  ModeChanged(y)  ShiftChanged(b)  KeyCaptured(s physical_key)
 ```
 
@@ -341,7 +371,7 @@ fails fast. The typed client proxy lives in `crates/ipc`.
   `StopCapture` or on its own 30 s after the last `StartCapture`, so a crashed client
   can't leave the device dead.
 - **Preview** shows a client-rendered 84-byte frame on the pad (the same payload as
-  `setKeyRow`) so an editor can show lighting changes live without saving. While a preview
+  `setKeyRow`), or a firmware effect given as TOML (`PreviewEffect`) so an editor can show lighting changes live without saving. While a preview
   is active the profile's own frames wait; `ClearPreview`, or 20 s without a renewing
   `PreviewFrame`, brings back the profile's current frame (or hands the pad back if the
   profile has no lighting). A frame of the wrong size is rejected with `InvalidArgs`.

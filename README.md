@@ -126,6 +126,9 @@ default = "#101010"
 KEY_1 = "#ff0000"
 
 [mode.1]
+[mode.1.effect]               # or a firmware effect instead of key colors (not both)
+type = "wave"
+direction = "left"
 [mode.2]
 ```
 
@@ -135,6 +138,9 @@ KEY_1 = "#ff0000"
   `extended_modes = true`.
 - **Macros** must be balanced (every key they press is released by the end). Each step is
   `[key, delay_ms]` (a tap) or `[key, "down"|"up", delay_ms]`.
+- **Firmware effects** (`spectrum`, `wave`, `breathing`, `reactive`, `starlight`) can replace
+  key colors on a mode or its Hypershift layer; see [DESIGN.md](DESIGN.md#firmware-effects)
+  for options. The pad runs them itself, so they use no CPU and can't show per-key colors.
 - **Lighting is per profile, opt-in.** A profile with no `lighting` never touches the key
   matrix. One that defines any owns it: modes without a frame go dark. Switching to a
   profile without lighting hands the pad back to OpenRazer's own effect.

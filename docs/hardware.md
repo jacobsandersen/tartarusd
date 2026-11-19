@@ -81,6 +81,32 @@ Implications:
 - `matrix_effect_static` (3 bytes RGB) and `matrix_effect_none` work.
 - `matrix_brightness` reads/writes ASCII `0`–`255`.
 
+## Firmware effects over OpenRazer D-Bus (2026-11-19)
+
+Run with `tools/effect_probe.py`; the user watched the pad. Whole-pad effects, no per-key
+control. Argument order is from OpenRazer's endpoints (`chroma_keyboard.py`): **colors first,
+speed last**.
+
+| Effect | Call | Seen on the device |
+|---|---|---|
+| Static | `setStatic(r,g,b)` | works |
+| Spectrum | `setSpectrum()` | works (rainbow cycle) |
+| Wave | `setWave(1)` / `setWave(2)` | 1 = right to left, 2 = left to right (OpenRazer's docstring says the opposite; the pad wins) |
+| Breathing | `setBreathSingle(r,g,b)`, `setBreathDual(r1,g1,b1,r2,g2,b2)`, `setBreathRandom()` | works (no speed setting) |
+| Reactive | `setReactive(r,g,b,speed)` | the pressed key lights and fades; speed 1..=4 (other values become 4) |
+| Starlight | `setStarlightSingle(r,g,b,speed)`, `setStarlightDual(r1,g1,b1,r2,g2,b2,speed)`, `setStarlightRandom(speed)` | works |
+| None | `setNone()` | works |
+
+- Colors and speed of the first reactive/starlight run were sent in the wrong order, so
+  those two are re-checked with the corrected probe (speed direction, colors).
+- Every `set*` effect call overwrites the effect OpenRazer remembers, so
+  `restoreLastEffect` after one would restore **ours**. The daemon reads the configured
+  effect (`getEffect`, `getEffectColors`, `getEffectSpeed`, `getWaveDir`) before its first
+  effect call and sets it again on hand-back.
+- `setCustom` and `setKeyRow` do not change the remembered effect.
+- OpenRazer's own ripple effect is software in its daemon and reads input events, which our
+  exclusive grab hides from it.
+
 ## OpenRazer D-Bus path (VERIFIED 2026-11-19, visually confirmed)
 
 - Bus `org.razer` (session). Device object `/org/razer/device/<serial>`; discover it
