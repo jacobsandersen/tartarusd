@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1](https://github.com/jacobsandersen/tartarusd/compare/v0.4.0...v0.4.1) (2026-11-19)
+
+
+### Bug Fixes
+
+* **gui:** show Pin or Unpin in the menu depending on the daemon's state ([4f40790](https://github.com/jacobsandersen/tartarusd/commit/4f40790395331c36160c333095bfe88609083397))
+* **gui:** show Pin or Unpin in the menu depending on the daemon's state ([8cc048a](https://github.com/jacobsandersen/tartarusd/commit/8cc048a50201a33b3b6fe05e12bf482ffc530e27))
+
 ## [0.4.0](https://github.com/jacobsandersen/tartarusd/compare/v0.3.0...v0.4.0) (2026-11-19)
 
 
