@@ -12,7 +12,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use crate::{
     action::{Action, Step},
-    config::Config,
+    config::{Config, ModeSwitch},
     keys::{Edge, Key, PhysicalKey, WheelDir},
     lighting::{Frame, Payload},
     profile::Profile,
@@ -44,13 +44,24 @@ pub enum Effect {
     ShiftChanged(bool),
 }
 
+/// A held mode key whose Hypershift layer is active.
+#[derive(Clone, Copy, Debug)]
+struct Shift {
+    /// When the key went down.
+    since: Duration,
+    /// Another input happened while it was held, so it is not a tap.
+    used: bool,
+    /// (`DoubleTap` only) this press followed a quick first tap.
+    second: bool,
+}
+
 #[derive(Clone, Copy, Debug)]
 enum ModeKeyState {
     Idle,
-    /// Pressed at this time with no other input yet.
+    /// (`Tap` only) pressed at this time with no other input yet.
     Pending(Duration),
-    /// Another input arrived while held: Hypershift layer is active.
-    Shifted,
+    /// Hypershift layer is active.
+    Shifted(Shift),
 }
 
 /// A macro in flight. Its steps are performed by [`Machine::tick`].
@@ -79,6 +90,9 @@ pub struct Machine {
     profile: Arc<Profile>,
     mode: usize,
     mode_key: ModeKeyState,
+    /// (`DoubleTap` only) a quick first tap just ended; a second tap before this time
+    /// completes the double tap. Any other input in between cancels it.
+    first_tap_until: Option<Duration>,
     held: HashMap<PhysicalKey, Held>,
     /// Output keys currently down, with reference counts. Macro steps use the same
     /// counts as physical keys, so every down still has exactly one up.
@@ -94,6 +108,7 @@ impl Machine {
             profile,
             mode: 0,
             mode_key: ModeKeyState::Idle,
+            first_tap_until: None,
             held: HashMap::new(),
             out: HashMap::new(),
             macros: Vec::new(),
@@ -106,7 +121,7 @@ impl Machine {
     }
 
     pub fn is_shifted(&self) -> bool {
-        matches!(self.mode_key, ModeKeyState::Shifted)
+        matches!(self.mode_key, ModeKeyState::Shifted(_))
     }
 
     pub fn profile(&self) -> &Arc<Profile> {
@@ -144,7 +159,7 @@ impl Machine {
         let mut fx = Vec::new();
         let mode_key = PhysicalKey::Key(self.cfg.mode_key);
         match ev {
-            Event::Press(k) if k == mode_key => self.mode_key_down(now),
+            Event::Press(k) if k == mode_key => self.mode_key_down(now, &mut fx),
             Event::Release(k) if k == mode_key => self.mode_key_up(now, &mut fx),
             Event::Press(k) => self.press(now, k, &mut fx),
             Event::Release(k) => self.release(k, &mut fx),
@@ -211,7 +226,14 @@ impl Machine {
         {
             // Held past the tap term with nothing else pressed: it is a hold, so show
             // Hypershift now rather than waiting for another key.
-            self.enter_shift(&mut fx);
+            self.begin_shift(
+                Shift {
+                    since: t0,
+                    used: true,
+                    second: false,
+                },
+                &mut fx,
+            );
         }
         self.run_due(now, &mut fx);
         fx
@@ -267,9 +289,25 @@ impl Machine {
         }
     }
 
-    fn mode_key_down(&mut self, now: Duration) {
-        if matches!(self.mode_key, ModeKeyState::Idle) {
-            self.mode_key = ModeKeyState::Pending(now);
+    fn mode_key_down(&mut self, now: Duration, fx: &mut Vec<Effect>) {
+        if !matches!(self.mode_key, ModeKeyState::Idle) {
+            return; // repeat
+        }
+        match self.cfg.mode_switch {
+            ModeSwitch::Tap => self.mode_key = ModeKeyState::Pending(now),
+            ModeSwitch::DoubleTap => {
+                // Hypershift shows at once. Whether this press is also a tap is decided
+                // on release.
+                let second = self.first_tap_until.take().is_some_and(|until| now < until);
+                self.begin_shift(
+                    Shift {
+                        since: now,
+                        used: false,
+                        second,
+                    },
+                    fx,
+                );
+            }
         }
     }
 
@@ -283,12 +321,23 @@ impl Machine {
                     self.change_mode(next, fx);
                 }
             }
-            ModeKeyState::Shifted => {
+            ModeKeyState::Shifted(s) => {
                 fx.push(Effect::ShiftChanged(false));
                 if self.cfg.hypershift_led_mask.is_some() {
                     fx.push(Effect::SetLed(self.led()));
                 }
                 self.push_shift_frame(fx);
+                // A quick press-and-release with nothing else pressed is a tap. In
+                // `DoubleTap` mode the first arms the second; the second cycles the mode.
+                let quick = now.saturating_sub(s.since) < self.cfg.tap_term;
+                if self.cfg.mode_switch == ModeSwitch::DoubleTap && !s.used && quick {
+                    if s.second {
+                        let next = (self.mode + 1) % self.profile.modes.len();
+                        self.change_mode(next, fx);
+                    } else {
+                        self.first_tap_until = Some(now + self.cfg.tap_term);
+                    }
+                }
             }
             ModeKeyState::Idle => {}
         }
@@ -298,16 +347,30 @@ impl Machine {
         if self.held.contains_key(&pk) {
             return; // auto-repeat
         }
-        if matches!(self.mode_key, ModeKeyState::Pending(_)) {
-            self.enter_shift(fx);
+        match &mut self.mode_key {
+            // First other input while the key is undecided: commit to Hypershift.
+            ModeKeyState::Pending(_) => {
+                self.begin_shift(
+                    Shift {
+                        since: now,
+                        used: true,
+                        second: false,
+                    },
+                    fx,
+                );
+            }
+            // Another input during a hold: it is a Hypershift use, not a tap.
+            ModeKeyState::Shifted(s) => s.used = true,
+            // Anything between two taps breaks the double tap.
+            ModeKeyState::Idle => self.first_tap_until = None,
         }
         let action = self.lookup(pk);
         self.perform(now, pk, action, fx);
     }
 
-    /// Pending -> Shifted, with its visible effects (signal, LED, frame).
-    fn enter_shift(&mut self, fx: &mut Vec<Effect>) {
-        self.mode_key = ModeKeyState::Shifted;
+    /// Enter Hypershift, with its visible effects (signal, LED, frame).
+    fn begin_shift(&mut self, shift: Shift, fx: &mut Vec<Effect>) {
+        self.mode_key = ModeKeyState::Shifted(shift);
         fx.push(Effect::ShiftChanged(true));
         if self.cfg.hypershift_led_mask.is_some() {
             fx.push(Effect::SetLed(self.led()));
@@ -428,6 +491,19 @@ mod tests {
 
     use super::*;
 
+    /// The single-tap gesture (the pre-`mode_switch` behavior) that most tests below cover.
+    fn tap_cfg() -> Config {
+        Config {
+            mode_switch: ModeSwitch::Tap,
+            ..Config::default()
+        }
+    }
+
+    /// The default gesture: Hypershift on press, double tap to cycle modes.
+    fn dt_machine() -> Machine {
+        Machine::new(Config::default(), profile(PROFILE))
+    }
+
     fn k(name: &str) -> Key {
         Key::from_name(name).unwrap()
     }
@@ -471,7 +547,7 @@ KEY_1 = "KEY_T"
     }
 
     fn machine() -> Machine {
-        Machine::new(Config::default(), profile(PROFILE))
+        Machine::new(tap_cfg(), profile(PROFILE))
     }
 
     fn press(m: &mut Machine, t: u64, name: &str) -> Vec<Effect> {
@@ -498,7 +574,7 @@ KEY_1 = "KEY_T"
 
     #[test]
     fn long_press_with_no_other_input_is_a_noop() {
-        let term = Config::default().tap_term.as_millis() as u64;
+        let term = tap_cfg().tap_term.as_millis() as u64;
         let mut m = machine();
         press(&mut m, 0, "KEY_LEFTALT");
         assert!(release(&mut m, term + 1, "KEY_LEFTALT").is_empty());
@@ -530,7 +606,7 @@ KEY_1 = "KEY_T"
     }
 
     fn term_ms() -> u64 {
-        Config::default().tap_term.as_millis() as u64
+        tap_cfg().tap_term.as_millis() as u64
     }
 
     #[test]
@@ -592,7 +668,7 @@ KEY_1 = "KEY_T"
         let term = term_ms();
         let cfg = Config {
             hypershift_led_mask: Some(7),
-            ..Config::default()
+            ..tap_cfg()
         };
         let mut m = Machine::new(cfg, profile(LIT));
         press(&mut m, 0, "KEY_LEFTALT");
@@ -707,7 +783,7 @@ KEY_1 = "KEY_T"
 
         let cfg = Config {
             hypershift_fallthrough: false,
-            ..Config::default()
+            ..tap_cfg()
         };
         let mut m = Machine::new(cfg, profile(PROFILE));
         press(&mut m, 0, "KEY_LEFTALT");
@@ -721,7 +797,7 @@ KEY_1 = "KEY_T"
     fn hypershift_led_shown_and_restored() {
         let cfg = Config {
             hypershift_led_mask: Some(7),
-            ..Config::default()
+            ..tap_cfg()
         };
         let mut m = Machine::new(cfg, profile(PROFILE));
         press(&mut m, 0, "KEY_LEFTALT");
@@ -739,7 +815,7 @@ KEY_1 = "KEY_T"
     #[test]
     fn shared_output_key_is_refcounted() {
         let src = "name='B'\n[mode.0]\nKEY_1='KEY_A'\nKEY_2='KEY_A'\n";
-        let mut m = Machine::new(Config::default(), profile(src));
+        let mut m = Machine::new(tap_cfg(), profile(src));
         assert_eq!(press(&mut m, 0, "KEY_1"), vec![down("KEY_A")]);
         assert!(press(&mut m, 1, "KEY_2").is_empty());
         assert!(release(&mut m, 2, "KEY_1").is_empty());
@@ -761,7 +837,7 @@ KEY_1 = "KEY_T"
     #[test]
     fn remember_mode_restores_per_profile() {
         let remember = "name='R'\nremember_mode=true\n[mode.0]\n[mode.1]\n[mode.2]\n";
-        let mut m = Machine::new(Config::default(), profile(remember));
+        let mut m = Machine::new(tap_cfg(), profile(remember));
         m.set_mode(2);
         m.swap_profile(profile("name='Other'\n[mode.0]\n"));
         assert_eq!(m.mode(), 0);
@@ -772,7 +848,7 @@ KEY_1 = "KEY_T"
 
     #[test]
     fn single_mode_profile_tap_is_a_noop() {
-        let mut m = Machine::new(Config::default(), profile("name='S'\n[mode.0]\n"));
+        let mut m = Machine::new(tap_cfg(), profile("name='S'\n[mode.0]\n"));
         press(&mut m, 0, "KEY_LEFTALT");
         assert!(release(&mut m, 10, "KEY_LEFTALT").is_empty());
     }
@@ -812,7 +888,7 @@ KEY_E = { macro = [["KEY_A", 100]] }
 "#;
 
     fn macro_machine() -> Machine {
-        Machine::new(Config::default(), profile(MACROS))
+        Machine::new(tap_cfg(), profile(MACROS))
     }
 
     #[test]
@@ -906,7 +982,7 @@ default = "#0000ff"
 
     #[test]
     fn frames_follow_mode_and_hypershift() {
-        let mut m = Machine::new(Config::default(), profile(LIT));
+        let mut m = Machine::new(tap_cfg(), profile(LIT));
         assert_eq!(w_cell(&m.current_frame().unwrap()), [0, 255, 255]);
 
         // Tap: mode 1 shows its own frame (default blue, KEY_W not overridden).
@@ -926,7 +1002,7 @@ default = "#0000ff"
 
     #[test]
     fn mode_without_a_frame_goes_dark_and_hypershift_keeps_the_mode_frame() {
-        let mut m = Machine::new(Config::default(), profile(LIT));
+        let mut m = Machine::new(tap_cfg(), profile(LIT));
         m.set_mode(2); // lighting profile, but mode 2 has no frame
         assert_eq!(w_cell(&m.current_frame().unwrap()), [0, 0, 0]);
 
@@ -949,6 +1025,131 @@ default = "#0000ff"
             vec![None],
             "hand the pad back on switching to an unlit profile"
         );
+    }
+
+    fn quick_tap(m: &mut Machine, t: u64, hold: u64) -> Vec<Effect> {
+        press(m, t, "KEY_LEFTALT");
+        release(m, t + hold, "KEY_LEFTALT")
+    }
+
+    #[test]
+    fn double_tap_default_shows_hypershift_on_press_with_no_delay() {
+        let mut m = dt_machine();
+        assert_eq!(
+            press(&mut m, 0, "KEY_LEFTALT"),
+            vec![Effect::ShiftChanged(true)]
+        );
+        assert!(m.is_shifted());
+        assert_eq!(m.next_deadline(), None, "nothing to wait for");
+        // Other keys use the Hypershift layer straight away, without re-announcing it.
+        assert_eq!(press(&mut m, 10, "KEY_1"), vec![down("KEY_F1")]);
+        release(&mut m, 20, "KEY_1");
+        assert_eq!(
+            release(&mut m, 30, "KEY_LEFTALT"),
+            vec![Effect::ShiftChanged(false)]
+        );
+        assert_eq!(m.mode(), 0);
+    }
+
+    #[test]
+    fn a_single_tap_never_changes_the_mode() {
+        let mut m = dt_machine();
+        assert_eq!(quick_tap(&mut m, 0, 50), vec![Effect::ShiftChanged(false)]);
+        assert_eq!(m.mode(), 0);
+        // Even long after: the pending first tap just expires.
+        assert_eq!(
+            quick_tap(&mut m, 5_000, 50),
+            vec![Effect::ShiftChanged(false)]
+        );
+        assert_eq!(m.mode(), 0);
+    }
+
+    #[test]
+    fn two_quick_taps_cycle_the_mode() {
+        let mut m = dt_machine();
+        quick_tap(&mut m, 0, 50);
+        let fx = quick_tap(&mut m, 150, 50);
+        assert_eq!(
+            fx,
+            vec![
+                Effect::ShiftChanged(false),
+                Effect::ModeChanged(1),
+                Effect::SetLed(2)
+            ]
+        );
+        assert_eq!(m.mode(), 1);
+        // And a double tap again advances (the first tap of the next pair is fresh).
+        quick_tap(&mut m, 1_000, 50);
+        quick_tap(&mut m, 1_100, 50);
+        assert_eq!(m.mode(), 2);
+    }
+
+    #[test]
+    fn the_gap_between_taps_must_be_shorter_than_the_tap_term() {
+        let term = term_ms();
+        let mut m = dt_machine();
+        quick_tap(&mut m, 0, 50); // first tap ends at 50
+        quick_tap(&mut m, 50 + term, 50); // gap == tap term: too slow, starts over
+        assert_eq!(m.mode(), 0);
+        // That second press counted as a new first tap, so the next quick one completes.
+        quick_tap(&mut m, 50 + term + 50 + 100, 50);
+        assert_eq!(m.mode(), 1);
+    }
+
+    #[test]
+    fn each_tap_must_be_shorter_than_the_tap_term() {
+        let term = term_ms();
+        let mut m = dt_machine();
+        quick_tap(&mut m, 0, 50);
+        quick_tap(&mut m, 100, term); // second press held too long: a hold, not a tap
+        assert_eq!(m.mode(), 0);
+        // A slow first press doesn't arm anything either.
+        quick_tap(&mut m, 10_000, term);
+        quick_tap(&mut m, 10_000 + term + 50, 50);
+        assert_eq!(m.mode(), 0);
+    }
+
+    #[test]
+    fn any_other_input_between_or_during_taps_cancels_the_double_tap() {
+        let mut m = dt_machine();
+        // Between the taps.
+        quick_tap(&mut m, 0, 50);
+        press(&mut m, 100, "KEY_Z");
+        release(&mut m, 110, "KEY_Z");
+        quick_tap(&mut m, 150, 50);
+        assert_eq!(m.mode(), 0);
+        // During the first tap: it was a Hypershift use, so it arms nothing.
+        press(&mut m, 1_000, "KEY_LEFTALT");
+        press(&mut m, 1_010, "KEY_1");
+        release(&mut m, 1_020, "KEY_1");
+        release(&mut m, 1_030, "KEY_LEFTALT");
+        quick_tap(&mut m, 1_100, 50);
+        assert_eq!(m.mode(), 0);
+    }
+
+    #[test]
+    fn double_tap_in_a_single_mode_profile_restores_the_led() {
+        let cfg = Config {
+            hypershift_led_mask: Some(7),
+            ..Config::default()
+        };
+        let mut m = Machine::new(cfg, profile("name='S'\n[mode.0]\n"));
+        quick_tap(&mut m, 0, 50);
+        let fx = quick_tap(&mut m, 100, 50);
+        assert!(
+            fx.contains(&Effect::SetLed(1)),
+            "LED returns to the mode's colour"
+        );
+        assert_eq!(m.mode(), 0);
+    }
+
+    #[test]
+    fn double_tap_shows_the_hypershift_frame_on_press() {
+        let mut m = Machine::new(Config::default(), profile(LIT));
+        let fx = press(&mut m, 0, "KEY_LEFTALT");
+        assert_eq!(w_cell(frames(&fx)[0].as_ref().unwrap()), [16, 16, 16]);
+        let back = release(&mut m, 50, "KEY_LEFTALT");
+        assert_eq!(w_cell(frames(&back)[0].as_ref().unwrap()), [0, 255, 255]);
     }
 
     struct Rng(u64);
@@ -989,7 +1190,12 @@ default = "#0000ff"
             let cfg = Config {
                 hypershift_led_mask: (seed % 2 == 0).then_some(7),
                 hypershift_fallthrough: seed % 3 != 0,
-                ..Config::default()
+                mode_switch: if (seed / 7) % 2 == 0 {
+                    ModeSwitch::Tap
+                } else {
+                    ModeSwitch::DoubleTap
+                },
+                ..tap_cfg()
             };
             let mut m = Machine::new(cfg, profiles[0].clone());
             let mut model: HashMap<Key, u32> = HashMap::new();

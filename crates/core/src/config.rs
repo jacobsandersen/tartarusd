@@ -6,10 +6,23 @@ use serde::Deserialize;
 
 use crate::keys::Key;
 
+/// How the mode key changes modes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ModeSwitch {
+    /// Pressing the key shows Hypershift at once; two quick taps in a row cycle the mode.
+    #[default]
+    DoubleTap,
+    /// A single quick tap cycles the mode; Hypershift starts when another key is pressed
+    /// or the key has been held for `tap_term`.
+    Tap,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Config {
     pub mode_key: Key,
-    /// A press-and-release shorter than this (with no other input) is a tap.
+    pub mode_switch: ModeSwitch,
+    /// How long counts as "quick": a tap must be shorter than this, and in `double_tap`
+    /// mode so must the gap between the two taps.
     pub tap_term: Duration,
     /// Keys unmapped in a Hypershift layer fall through to the mode's own bindings.
     pub hypershift_fallthrough: bool,
@@ -22,6 +35,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             mode_key: Key::LEFTALT,
+            mode_switch: ModeSwitch::default(),
             tap_term: Duration::from_millis(350),
             hypershift_fallthrough: true,
             hypershift_led_mask: None,
@@ -36,6 +50,8 @@ pub enum ConfigError {
     Toml(#[from] toml::de::Error),
     #[error(transparent)]
     UnknownKey(#[from] crate::keys::UnknownKey),
+    #[error("`mode_switch` must be \"double_tap\" or \"tap\" (got `{0}`)")]
+    BadModeSwitch(String),
     #[error("`tap_term_ms` must be 1..=5000")]
     BadTapTerm,
     #[error("`hypershift_led_mask` must be 1..=7")]
@@ -46,6 +62,7 @@ pub enum ConfigError {
 #[serde(deny_unknown_fields)]
 struct Raw {
     mode_key: Option<String>,
+    mode_switch: Option<String>,
     tap_term_ms: Option<u64>,
     hypershift_fallthrough: Option<bool>,
     hypershift_led_mask: Option<u8>,
@@ -67,7 +84,13 @@ impl Config {
         {
             return Err(ConfigError::BadLedMask);
         }
+        let mode_switch = match raw.mode_switch.as_deref() {
+            None | Some("double_tap") => ModeSwitch::DoubleTap,
+            Some("tap") => ModeSwitch::Tap,
+            Some(other) => return Err(ConfigError::BadModeSwitch(other.to_owned())),
+        };
         Ok(Config {
+            mode_switch,
             mode_key: raw.mode_key.map_or(Ok(d.mode_key), |s| s.parse())?,
             tap_term,
             hypershift_fallthrough: raw
@@ -86,6 +109,19 @@ mod tests {
     #[test]
     fn empty_is_default() {
         assert_eq!(Config::from_toml("").unwrap(), Config::default());
+    }
+
+    #[test]
+    fn mode_switch_defaults_to_double_tap_and_is_configurable() {
+        assert_eq!(Config::default().mode_switch, ModeSwitch::DoubleTap);
+        assert_eq!(
+            Config::from_toml("").unwrap().mode_switch,
+            ModeSwitch::DoubleTap
+        );
+        let c = |v: &str| Config::from_toml(&format!("mode_switch = '{v}'"));
+        assert_eq!(c("tap").unwrap().mode_switch, ModeSwitch::Tap);
+        assert_eq!(c("double_tap").unwrap().mode_switch, ModeSwitch::DoubleTap);
+        assert!(matches!(c("triple_tap"), Err(ConfigError::BadModeSwitch(s)) if s == "triple_tap"));
     }
 
     #[test]

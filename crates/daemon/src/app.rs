@@ -297,7 +297,7 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use evdev::EventType;
-    use tartarusd_core::{Config, Edge, Key};
+    use tartarusd_core::{Config, Edge, Key, ModeSwitch};
     use tokio::sync::mpsc::UnboundedReceiver;
 
     use super::*;
@@ -342,6 +342,10 @@ mod tests {
     }
 
     fn fixture(files: &[(&str, String)], start: &str) -> Fixture {
+        fixture_with(Config::default(), files, start)
+    }
+
+    fn fixture_with(cfg: Config, files: &[(&str, String)], start: &str) -> Fixture {
         let dir = tempfile::tempdir().unwrap();
         for (n, t) in files {
             std::fs::write(dir.path().join(n), t).unwrap();
@@ -351,7 +355,7 @@ mod tests {
             set.update(&profiles::read_files(dir.path()).unwrap())
                 .is_empty()
         );
-        let machine = Machine::new(Config::default(), set.pick(Some(start)).unwrap());
+        let machine = Machine::new(cfg, set.pick(Some(start)).unwrap());
         let (led_tx, led) = watch::channel(machine.led());
         let (frame_tx, frame) = watch::channel(machine.current_frame());
         let (sig_tx, sigs) = mpsc::unbounded_channel();
@@ -498,7 +502,12 @@ mod tests {
 
     #[test]
     fn holding_the_mode_key_shows_hypershift_on_a_tick_without_another_key() {
-        let mut f = one("P");
+        // The `tap` gesture: Hypershift starts after the tap term, driven by the timer.
+        let tap = Config {
+            mode_switch: ModeSwitch::Tap,
+            ..Config::default()
+        };
+        let mut f = fixture_with(tap, &[("p.toml", profile_text("P", "KEY_A"))], "P");
         f.app.input(Duration::ZERO, &raw("KEY_LEFTALT", 1)).unwrap();
         let due = f
             .app
@@ -520,6 +529,31 @@ mod tests {
             0,
             "a hold never changes the mode"
         );
+    }
+
+    #[test]
+    fn default_gesture_shows_hypershift_on_press_and_cycles_modes_on_a_double_tap() {
+        let mut f = one("P"); // default config: double_tap
+        f.app.input(Duration::ZERO, &raw("KEY_LEFTALT", 1)).unwrap();
+        assert_eq!(
+            drain(&mut f.sigs),
+            [Signal::ShiftChanged(true)],
+            "immediately, no timer"
+        );
+        assert_eq!(f.app.deadline(), None);
+        f.app
+            .input(Duration::from_millis(40), &raw("KEY_LEFTALT", 0))
+            .unwrap();
+        assert_eq!(drain(&mut f.sigs), [Signal::ShiftChanged(false)]);
+
+        f.app
+            .input(Duration::from_millis(120), &raw("KEY_LEFTALT", 1))
+            .unwrap();
+        f.app
+            .input(Duration::from_millis(160), &raw("KEY_LEFTALT", 0))
+            .unwrap();
+        assert!(drain(&mut f.sigs).contains(&Signal::ModeChanged(1)));
+        assert_eq!(*f.led.borrow(), 2, "mode 1 shows green");
     }
 
     #[test]

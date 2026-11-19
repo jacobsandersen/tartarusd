@@ -11,7 +11,7 @@ pub mod profile_set;
 pub mod window;
 
 pub use action::{Action, ActionError, Step};
-pub use config::{Config, ConfigError};
+pub use config::{Config, ConfigError, ModeSwitch};
 pub use keys::{Edge, Key, PhysicalKey, UnknownKey, WheelDir};
 pub use lighting::{Frame, Payload, Rgb};
 pub use machine::{Effect, Event, Machine};
