@@ -76,6 +76,32 @@ pub fn set_binding(
     }
 }
 
+/// Set or clear the same binding on several keys.
+pub fn set_bindings(
+    p: &mut Profile,
+    mode: usize,
+    layer: Layer,
+    keys: &[PhysicalKey],
+    a: Option<Action>,
+) {
+    for k in keys {
+        set_binding(p, mode, layer, *k, a.clone());
+    }
+}
+
+/// What `keys` all have in common: `Some(binding)` (possibly unbound) if every key has the
+/// same one, `None` if they differ.
+pub fn common_binding(
+    p: &Profile,
+    mode: usize,
+    layer: Layer,
+    keys: &[PhysicalKey],
+) -> Option<Option<Action>> {
+    let mut it = keys.iter().map(|k| binding(p, mode, layer, *k).cloned());
+    let first = it.next()?;
+    it.all(|b| b == first).then_some(first)
+}
+
 fn light(p: &Profile, mode: usize, layer: Layer) -> Option<&Light> {
     let m = p.modes.get(mode)?;
     match layer {
@@ -417,6 +443,40 @@ mod tests {
         set_binding(&mut p, 0, Layer::Base, one, None);
         assert_eq!(binding(&p, 0, Layer::Base, one), None);
         validate(&p).unwrap();
+    }
+
+    #[test]
+    fn one_action_can_be_applied_to_many_keys_and_a_common_one_is_found() {
+        let mut p = blank("x");
+        let keys = [k("KEY_1"), k("KEY_2"), k("KEY_3")];
+        assert_eq!(
+            common_binding(&p, 0, Layer::Base, &keys),
+            Some(None),
+            "all unbound"
+        );
+        assert_eq!(common_binding(&p, 0, Layer::Base, &[]), None);
+        set_bindings(&mut p, 0, Layer::Base, &keys, Some(Action::Disabled));
+        validate(&p).unwrap();
+        for key in keys {
+            assert_eq!(binding(&p, 0, Layer::Base, key), Some(&Action::Disabled));
+        }
+        assert_eq!(
+            common_binding(&p, 0, Layer::Base, &keys),
+            Some(Some(Action::Disabled))
+        );
+        set_binding(&mut p, 0, Layer::Base, keys[1], Some(Action::NextMode));
+        assert_eq!(
+            common_binding(&p, 0, Layer::Base, &keys),
+            None,
+            "they differ now"
+        );
+        set_bindings(&mut p, 0, Layer::Base, &keys, None);
+        assert_eq!(common_binding(&p, 0, Layer::Base, &keys), Some(None));
+        // Hypershift: an emptied layer disappears once every key is cleared.
+        set_bindings(&mut p, 0, Layer::Hypershift, &keys, Some(Action::Disabled));
+        assert!(p.modes[0].hypershift.is_some());
+        set_bindings(&mut p, 0, Layer::Hypershift, &keys, None);
+        assert!(p.modes[0].hypershift.is_none());
     }
 
     #[test]

@@ -155,7 +155,8 @@ The full format, the rules for each field, and the design behind them are in
 `tartarusd-gui` (installed with `--gui`, launcher "Tartarus Profiles") edits the same profile
 files without hand-editing: pick a profile, pick a mode, click a key on the drawn pad and choose
 what it does (a key or chord you can record from the keyboard or type with completion: "shift" then Tab gives `KEY_LEFTSHIFT`; a macro; switch mode; disable).
-The **Hypershift** toggle edits the layer used while the mode key is held, and the **Lighting**
+Select several keys (Ctrl-click, or drag a box across the pad) to give them all the same action,
+for example Disable. The **Hypershift** toggle edits the layer used while the mode key is held, and the **Lighting**
 view paints per-key colors for each mode and layer: click a key, Ctrl-click to add more, or drag a
 box across the pad (Ctrl+A selects all), then pick a color. Colors apply as you drag the sliders,
 Copy/Paste color (also Ctrl+C / Ctrl+V) moves a color between keys, and on the Hypershift layer

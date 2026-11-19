@@ -69,32 +69,36 @@ impl Ui {
         self.cancel_recording();
         self.key_picker.borrow_mut().take();
         clear(&self.w.inspector);
-        let (sel, count, view, has_draft) = {
+        let (keys, view, has_draft) = {
             let st = self.st.borrow();
-            (st.selected, st.selection.len(), st.view, st.draft.is_some())
+            let keys: Vec<PhysicalKey> = st
+                .selection
+                .iter()
+                .copied()
+                .filter(|k| layout::slot_for(*k).is_some())
+                .collect();
+            (keys, st.view, st.draft.is_some())
         };
         if !has_draft {
             return;
         }
         match view {
             View::Lighting => self.lighting_inspector(),
-            View::Bindings => match sel.filter(|k| layout::slot_for(*k).is_some()) {
-                Some(key) if count == 1 => self.bindings_inspector(key),
-                Some(_) => self
-                    .w
-                    .inspector
-                    .append(&dim("Select one key to edit its action.")),
-                None => self.w.inspector.append(&dim("Select a key.")),
-            },
+            View::Bindings if keys.is_empty() => {
+                self.w.inspector.append(&dim("Select a key."));
+            }
+            View::Bindings => self.bindings_inspector(keys),
         }
     }
 
-    fn heading(&self, sel: PhysicalKey) -> gtk::Label {
+    fn heading(&self, keys: &[PhysicalKey]) -> gtk::Label {
         let st = self.st.borrow();
-        let slot = layout::slot_for(sel).expect("checked by the caller");
+        let what = match keys {
+            [one] => format!("Key {}", layout::slot_for(*one).map_or("?", |s| s.label)),
+            many => format!("{} keys", many.len()),
+        };
         let l = gtk::Label::new(Some(&format!(
-            "Key {} · {} · mode {}",
-            slot.label,
+            "{what} · {} · mode {}",
             layer_name(st.layer),
             st.mode + 1
         )));
@@ -103,71 +107,83 @@ impl Ui {
         l
     }
 
-    fn bindings_inspector(self: &Rc<Self>, sel: PhysicalKey) {
-        let (mode, layer, cur) = {
+    fn bindings_inspector(self: &Rc<Self>, keys: Vec<PhysicalKey>) {
+        let keys: Rc<[PhysicalKey]> = keys.into();
+        let (mode, layer, common) = {
             let st = self.st.borrow();
-            let cur = st
+            let common = st
                 .draft
                 .as_ref()
-                .and_then(|d| edit::binding(d, st.mode, st.layer, sel))
-                .cloned();
-            (st.mode, st.layer, cur)
+                .and_then(|d| edit::common_binding(d, st.mode, st.layer, &keys));
+            (st.mode, st.layer, common)
         };
+        // `None`: the keys have different actions. The menu can't be left empty, so it gets
+        // an extra first entry saying so.
+        let mixed = common.is_none();
+        let offset = u32::from(mixed);
+        let kind = common.as_ref().map_or(0, |a| kind_of(a.as_ref()));
         let b = &self.w.inspector;
-        b.append(&self.heading(sel));
+        b.append(&self.heading(&keys));
         if layer == Layer::Hypershift {
             b.append(&dim("Unset keys use the base layer."));
         }
+        if mixed {
+            b.append(&dim("Choose an action to apply to all of these keys."));
+        }
 
-        let drop = gtk::DropDown::from_strings(&KINDS);
-        drop.set_selected(kind_of(cur.as_ref()));
+        let mut names: Vec<&str> = Vec::new();
+        if mixed {
+            names.push("Different actions");
+        }
+        names.extend(KINDS);
+        let drop = gtk::DropDown::from_strings(&names);
+        drop.set_selected(if mixed { 0 } else { kind });
         let detail = gtk::Box::new(gtk::Orientation::Vertical, 8);
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         row.append(&gtk::Label::new(Some("Action")));
         row.append(&drop);
         b.append(&row);
         b.append(&detail);
-        self.fill_detail(&detail, sel, kind_of(cur.as_ref()));
+        self.fill_detail(&detail, &keys, if mixed { u32::MAX } else { kind });
 
         let (ui, detail) = (Rc::clone(self), detail.clone());
         drop.connect_selected_notify(move |d| {
+            // The extra first entry of a mixed selection is not an action.
+            let Some(kind) = d.selected().checked_sub(offset) else {
+                return;
+            };
             if ui.building.get() {
                 return;
             }
             ui.cancel_recording();
-            let action = match d.selected() {
-                1 => Some(Action::Passthrough),
-                2 => Some(Action::Disabled),
-                5 => Some(Action::SetMode(0)),
-                6 => Some(Action::NextMode),
-                k @ (3 | 4) => {
-                    let st = ui.st.borrow();
-                    let keep = st
-                        .draft
-                        .as_ref()
-                        .and_then(|p| edit::binding(p, mode, layer, sel))
-                        .cloned();
-                    drop_borrow(st);
-                    keep.filter(|a| kind_of(Some(a)) == k)
-                }
+            // `None`: change nothing yet. A key or macro needs input first, and until it is
+            // valid the keys keep what they have.
+            let action = match kind {
+                0 => Some(None),
+                1 => Some(Some(Action::Passthrough)),
+                2 => Some(Some(Action::Disabled)),
+                5 => Some(Some(Action::SetMode(0))),
+                6 => Some(Some(Action::NextMode)),
                 _ => None,
             };
-            ui.edit(|p| edit::set_binding(p, mode, layer, sel, action));
+            if let Some(action) = action {
+                ui.edit(|p| edit::set_bindings(p, mode, layer, &keys, action));
+            }
             clear(&detail);
-            ui.fill_detail(&detail, sel, d.selected());
+            ui.fill_detail(&detail, &keys, kind);
         });
     }
 
     /// The part of the editor that depends on the kind of action (`kind` is the menu entry).
-    fn fill_detail(self: &Rc<Self>, detail: &gtk::Box, sel: PhysicalKey, kind: u32) {
+    fn fill_detail(self: &Rc<Self>, detail: &gtk::Box, keys: &Rc<[PhysicalKey]>, kind: u32) {
         let (mode, layer, cur, modes) = {
             let st = self.st.borrow();
             let d = st.draft.as_ref();
             (
                 st.mode,
                 st.layer,
-                d.and_then(|d| edit::binding(d, st.mode, st.layer, sel))
-                    .cloned(),
+                d.and_then(|d| edit::common_binding(d, st.mode, st.layer, keys))
+                    .flatten(),
                 d.map_or(1, |d| d.modes.len()),
             )
         };
@@ -198,7 +214,7 @@ impl Ui {
                     "Key names joined with +. Type a few letters and press Tab to complete.",
                 ));
 
-                let (ui, err2) = (Rc::clone(self), err.clone());
+                let (ui, err2, keys) = (Rc::clone(self), err.clone(), Rc::clone(keys));
                 entry.connect_changed(move |e| {
                     if ui.building.get() {
                         return;
@@ -207,7 +223,7 @@ impl Ui {
                         Ok(a) => {
                             err2.set_visible(false);
                             e.remove_css_class("error");
-                            ui.edit(|p| edit::set_binding(p, mode, layer, sel, Some(a)));
+                            ui.edit(|p| edit::set_bindings(p, mode, layer, &keys, Some(a)));
                         }
                         Err(why) => {
                             err2.set_text(&why);
@@ -268,7 +284,7 @@ impl Ui {
                     "One step per line: `KEY_E 50` (tap after 50 ms), `KEY_LEFTSHIFT down 0`, \
                      `KEY_LEFTSHIFT up 100`. Every key pressed must be released.",
                 ));
-                let ui = Rc::clone(self);
+                let (ui, keys) = (Rc::clone(self), Rc::clone(keys));
                 view.buffer().connect_changed(move |buf| {
                     if ui.building.get() {
                         return;
@@ -277,7 +293,7 @@ impl Ui {
                     match text::parse_macro(&t) {
                         Ok(a) => {
                             err.set_visible(false);
-                            ui.edit(|p| edit::set_binding(p, mode, layer, sel, Some(a)));
+                            ui.edit(|p| edit::set_bindings(p, mode, layer, &keys, Some(a)));
                         }
                         Err(why) => {
                             err.set_text(&why);
@@ -299,13 +315,15 @@ impl Ui {
                 list.set_selection_mode(gtk::SelectionMode::None);
                 list.append(&spin);
                 detail.append(&list);
-                let ui = Rc::clone(self);
+                let (ui, keys) = (Rc::clone(self), Rc::clone(keys));
                 spin.connect_value_notify(move |s| {
                     if ui.building.get() {
                         return;
                     }
                     let n = (s.value() as u8).saturating_sub(1);
-                    ui.edit(|p| edit::set_binding(p, mode, layer, sel, Some(Action::SetMode(n))));
+                    ui.edit(|p| {
+                        edit::set_bindings(p, mode, layer, &keys, Some(Action::SetMode(n)));
+                    });
                 });
             }
             _ => {}
@@ -703,8 +721,6 @@ impl Ui {
         });
     }
 }
-
-fn drop_borrow<T>(_: T) {}
 
 /// Capture-phase key handling so a chord can be recorded without the focused widget
 /// reacting to it. GTK's key codes are evdev codes plus 8 on both X11 and Wayland.

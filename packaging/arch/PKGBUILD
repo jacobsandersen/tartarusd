@@ -18,7 +18,7 @@
 
 pkgbase=tartarusd-git
 pkgname=(tartarusd-git tartarusd-gui-git)
-pkgver=0.1.0.r70.g53e4ba2
+pkgver=0.2.0.r75.g8068506
 pkgrel=1
 pkgdesc='Userspace keymap daemon for the Razer Tartarus V2: modes, Hypershift, per-key lighting'
 arch=(x86_64)
