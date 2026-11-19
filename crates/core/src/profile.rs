@@ -40,6 +40,13 @@ pub type Layer = HashMap<PhysicalKey, Action>;
 pub struct TitleRegex(regex::Regex);
 
 impl TitleRegex {
+    /// Compile `src`; the error text says what is wrong with the pattern.
+    pub fn new(src: &str) -> Result<TitleRegex, String> {
+        regex::Regex::new(src)
+            .map(TitleRegex)
+            .map_err(|e| e.to_string())
+    }
+
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
@@ -501,6 +508,12 @@ led_mask = 2
     fn title_regex_is_searched_not_anchored() {
         let p = Profile::from_toml("name='x'\n[[match]]\ntitle_regex='Elden'\n[mode.0]\n").unwrap();
         assert!(p.matches(&win("", "ELDEN RING - Elden Ring")));
+    }
+
+    #[test]
+    fn title_regex_new_compiles_or_explains() {
+        assert_eq!(TitleRegex::new("^Foo.*").unwrap().as_str(), "^Foo.*");
+        assert!(TitleRegex::new("(").unwrap_err().contains("unclosed"));
     }
 
     #[test]

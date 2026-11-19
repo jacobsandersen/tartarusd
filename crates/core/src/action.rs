@@ -86,7 +86,8 @@ impl Action {
         }
     }
 
-    fn from_text(s: &str) -> Result<Action, ActionError> {
+    /// Parse the string forms: `passthrough`, `disabled`, `next_mode`, or a `+` chord.
+    pub fn from_text(s: &str) -> Result<Action, ActionError> {
         match s.trim() {
             "passthrough" => Ok(Action::Passthrough),
             "disabled" => Ok(Action::Disabled),
