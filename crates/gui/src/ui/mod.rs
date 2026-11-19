@@ -2,6 +2,7 @@
 //! it, so there is exactly one place that says what is selected and what is edited.
 
 mod colors;
+mod completion;
 mod dialogs;
 mod inspector;
 mod keypad;
@@ -59,6 +60,7 @@ pub struct Ui {
 
 pub struct Widgets {
     pub stack: gtk::Stack,
+    pub scroll: gtk::ScrolledWindow,
     pub list: gtk::ListBox,
     pub page: adw::NavigationPage,
     pub save: gtk::Button,
@@ -411,6 +413,7 @@ fn section(title: &str) -> gtk::Label {
 pub fn build(app: &adw::Application, dir: PathBuf) -> Rc<Ui> {
     let w = Widgets {
         stack: gtk::Stack::new(),
+        scroll: gtk::ScrolledWindow::builder().vexpand(true).build(),
         list: gtk::ListBox::new(),
         page: adw::NavigationPage::builder().title("tartarusd").build(),
         save: gtk::Button::with_label("Save"),
@@ -543,6 +546,8 @@ fn content_page(ui: &Rc<Ui>) -> adw::NavigationPage {
     col.set_margin_start(16);
     col.set_margin_end(16);
 
+    col.append(&keypad::keymap_section(ui));
+
     let group = adw::PreferencesGroup::builder().title("Profile").build();
     group.add(&ui.w.name);
     group.add(&ui.w.remember);
@@ -551,21 +556,16 @@ fn content_page(ui: &Rc<Ui>) -> adw::NavigationPage {
     sidebar::wire_profile_fields(ui);
 
     col.append(&sidebar::rules_section(ui));
-    col.append(&keypad::keymap_section(ui));
 
     let clamp = adw::Clamp::builder().maximum_size(980).child(&col).build();
-    let scroll = gtk::ScrolledWindow::builder()
-        .child(&clamp)
-        .vexpand(true)
-        .build();
+    ui.w.scroll.set_child(Some(&clamp));
 
     let empty = adw::StatusPage::builder()
-        .icon_name("input-keyboard-symbolic")
         .title("No profile open")
         .description("Pick a profile on the left, or create one.")
         .build();
     ui.w.stack.add_named(&empty, Some("empty"));
-    ui.w.stack.add_named(&scroll, Some("editor"));
+    ui.w.stack.add_named(&ui.w.scroll, Some("editor"));
 
     let view = adw::ToolbarView::new();
     view.add_top_bar(&header);

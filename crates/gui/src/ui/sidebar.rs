@@ -82,7 +82,11 @@ impl Ui {
         if st.entries.is_empty() {
             let hint = gtk::Label::new(Some("No profiles yet.\nUse + to create or import one."));
             hint.set_justify(gtk::Justification::Center);
+            hint.set_wrap(true);
+            hint.set_max_width_chars(22);
             hint.set_margin_top(24);
+            hint.set_margin_start(12);
+            hint.set_margin_end(12);
             hint.add_css_class("dim-label");
             l.append(&hint);
         }

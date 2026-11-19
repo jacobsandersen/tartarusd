@@ -154,6 +154,23 @@ impl Ui {
         self.st.borrow_mut().selected = Some(key);
         self.rebuild_inspector();
         self.refresh_keypad();
+        self.reveal_inspector();
+    }
+
+    /// Scroll so the whole inspector is visible; it sits below the pad.
+    fn reveal_inspector(self: &Rc<Self>) {
+        let ui = Rc::clone(self);
+        glib::idle_add_local_once(move || {
+            let scroll = &ui.w.scroll;
+            let Some(b) = ui.w.inspector.compute_bounds(scroll) else {
+                return;
+            };
+            let overflow = f64::from(b.y() + b.height()) - f64::from(scroll.height());
+            if overflow > 0.0 {
+                let adj = scroll.vadjustment();
+                adj.set_value(adj.value() + overflow + 12.0);
+            }
+        });
     }
 
     /// Redraw every cap from the draft and the selection.

@@ -3,6 +3,7 @@
 //! It edits the profile files the daemon watches, so it works without the daemon; when
 //! the daemon is running it adds live status, pinning and "press the key on the pad".
 
+mod complete;
 mod daemon;
 mod edit;
 mod layout;

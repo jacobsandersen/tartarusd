@@ -195,6 +195,7 @@ impl Ui {
                     .placeholder_text("KEY_LEFTCTRL+KEY_C")
                     .hexpand(true)
                     .build();
+                super::completion::attach(&entry);
                 let rec = gtk::ToggleButton::with_label("Record");
                 rec.set_tooltip_text(Some("Press the keys on your keyboard"));
                 row.append(&entry);
@@ -206,7 +207,8 @@ impl Ui {
                 detail.append(&row);
                 detail.append(&err);
                 detail.append(&dim(
-                    "Linux key names joined with +. Several keys are pressed together, like Ctrl+C.",
+                    "Linux key names joined with +, pressed together (Ctrl+C). Type a few letters, like \
+                     \"shift\", and press Tab to complete it.",
                 ));
 
                 let (ui, err2) = (Rc::clone(self), err.clone());
@@ -387,12 +389,12 @@ impl Ui {
                 row.add_suffix(&reset);
                 row.add_suffix(&btn);
                 list.append(&row);
-                let ui = Rc::clone(self);
+                let (ui, reset2) = (Rc::clone(self), reset.clone());
                 btn.connect_rgba_notify(move |b| {
                     if !ui.building.get() {
                         let c = colors::from_rgba(&b.rgba());
                         ui.edit(|p| edit::set_color(p, mode, layer, key, Some(c)));
-                        ui.rebuild_inspector();
+                        reset2.set_sensitive(true);
                     }
                 });
                 let ui = Rc::clone(self);
@@ -403,6 +405,11 @@ impl Ui {
             }
         }
         b.append(&list);
+        if frame.is_none() {
+            b.append(&dim(
+                "Turn on custom lighting above to choose key colors for this layer.",
+            ));
+        }
         if frame.is_some() && !has_led {
             b.append(&dim(
                 "This key has no backlight. Only keys 01–20 and the wheel click do.",
