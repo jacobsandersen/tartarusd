@@ -1,0 +1,30 @@
+# tartarusd global configuration: ~/.config/tartarusd/config.toml
+# Every option is optional; the values shown are the defaults. The daemon reads this
+# file at startup, so restart it after editing (profiles, by contrast, reload live).
+
+# The Tartarus hyper/mode key (a Linux key name). It is consumed by the daemon and
+# never forwarded.
+mode_key = "KEY_LEFTALT"
+
+# How the mode key switches modes:
+#   "double_tap"  pressing it shows Hypershift immediately; two quick taps in a row
+#                 cycle the mode.
+#   "tap"         one quick tap cycles the mode; Hypershift starts when another key is
+#                 pressed, or after the key has been held for tap_term_ms.
+mode_switch = "double_tap"
+
+# What counts as quick, in milliseconds (1-5000): a tap must be shorter than this, and
+# in "double_tap" mode so must the gap between the two taps.
+tap_term_ms = 350
+
+# Keys not bound in a mode's Hypershift layer behave as in the mode's normal layer.
+# Set to false to pass them through unchanged instead.
+hypershift_fallthrough = true
+
+# Profile LEDs shown while Hypershift is active (B=1, G=2, R=4; 1-7). Off by default:
+# the mode's own LED stays lit. For example, 7 lights all three.
+# hypershift_led_mask = 7
+
+# Profile (by its `name`) to start with, and to return to when nothing is pinned or
+# matched. Optional if there is exactly one profile.
+# default_profile = "Default"
