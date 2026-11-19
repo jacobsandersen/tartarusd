@@ -195,9 +195,15 @@ key has been held for a moment. Neither adds any delay to other keys. Set it in
 `config.toml`:
 
 ```toml
-mode_switch = "double_tap"   # or "tap"
+mode_switch = "double_tap"   # or "tap" or "select"
 tap_term_ms = 350            # what counts as quick
 ```
+
+With `mode_switch = "select"`, pressing the key still shows Hypershift, but **two quick
+taps** open a mode selection. The mode LED blinks, D-pad up and down choose a mode (the LED
+shows the choice), and one tap of the mode key picks it. If nothing is pressed for
+`select_timeout_ms` (default 4000), the selection is cancelled and the mode is unchanged.
+Other keys do nothing while it is open. It is not offered in a profile with one mode.
 
 All options, with their defaults, are in
 [`packaging/config.example.toml`](packaging/config.example.toml). The config is read at

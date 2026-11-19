@@ -196,6 +196,7 @@ and switches modes. Which gesture switches modes is a global option, `mode_switc
 |---|---|---|
 | `double_tap` (default) | shows Hypershift immediately | two quick taps in a row |
 | `tap` | undecided until another input or `tap_term` | one quick tap |
+| `select` | shows Hypershift immediately | two quick taps open a timed selection (below) |
 
 Either way the mode key never emits anything itself, and neither gesture adds latency
 to other keys. "Quick" means shorter than `tap_term` (default 350 ms; 200 ms proved too
@@ -223,6 +224,20 @@ tight in practice).
   input in between or during either tap. Any other input cancels it.
 - Pressing another key while the mode key is down is an ordinary Hypershift use and
   arms nothing.
+
+### `select`: choose a mode
+
+Opt-in. Pressing and tapping work as in `double_tap`, but the second quick tap opens a
+**selection** instead of cycling:
+
+- The profile LED blinks the candidate mode (starting on the current one). D-pad up and
+  down move the candidate (wrapping); the LED shows it. The real mode, bindings and
+  lighting do not change yet.
+- One quick tap of the mode key picks the candidate. A hold does nothing.
+- Every other input is swallowed. With no navigation for `select_timeout_ms` (default
+  4000) the selection is cancelled and the real mode's LED returns.
+- Profile swap and D-Bus `SetMode` also close it. A profile with one mode never opens it.
+- The blink is driven by `Machine::tick`/`next_deadline`, like macros (300 ms per phase).
 
 ### `tap`: mode switch first
 
@@ -268,8 +283,9 @@ Global config:
 
 ```toml
 mode_key = "KEY_LEFTALT"
-mode_switch = "double_tap"   # or "tap"
+mode_switch = "double_tap"   # or "tap" or "select"
 tap_term_ms = 350
+# select_timeout_ms = 4000  # "select" only
 hypershift_fallthrough = true
 # hypershift_led_mask = 7
 ```

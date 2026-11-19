@@ -15,6 +15,9 @@ pub enum ModeSwitch {
     /// A single quick tap cycles the mode; Hypershift starts when another key is pressed
     /// or the key has been held for `tap_term`.
     Tap,
+    /// Like `DoubleTap`, but two quick taps open a timed selection: the profile LED blinks,
+    /// D-pad up/down choose a mode, and a single tap of the mode key picks it.
+    Select,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -24,6 +27,8 @@ pub struct Config {
     /// How long counts as "quick": a tap must be shorter than this, and in `double_tap`
     /// mode so must the gap between the two taps.
     pub tap_term: Duration,
+    /// (`Select` only) how long the selection waits without input before it is cancelled.
+    pub select_timeout: Duration,
     /// Keys unmapped in a Hypershift layer fall through to the mode's own bindings.
     pub hypershift_fallthrough: bool,
     /// LED mask shown while Hypershift is held (restored on release).
@@ -37,6 +42,7 @@ impl Default for Config {
             mode_key: Key::LEFTALT,
             mode_switch: ModeSwitch::default(),
             tap_term: Duration::from_millis(350),
+            select_timeout: Duration::from_millis(4000),
             hypershift_fallthrough: true,
             hypershift_led_mask: None,
             default_profile: None,
@@ -50,10 +56,12 @@ pub enum ConfigError {
     Toml(#[from] toml::de::Error),
     #[error(transparent)]
     UnknownKey(#[from] crate::keys::UnknownKey),
-    #[error("`mode_switch` must be \"double_tap\" or \"tap\" (got `{0}`)")]
+    #[error("`mode_switch` must be \"double_tap\", \"tap\" or \"select\" (got `{0}`)")]
     BadModeSwitch(String),
     #[error("`tap_term_ms` must be 1..=5000")]
     BadTapTerm,
+    #[error("`select_timeout_ms` must be 500..=60000")]
+    BadSelectTimeout,
     #[error("`hypershift_led_mask` must be 1..=7")]
     BadLedMask,
 }
@@ -64,6 +72,7 @@ struct Raw {
     mode_key: Option<String>,
     mode_switch: Option<String>,
     tap_term_ms: Option<u64>,
+    select_timeout_ms: Option<u64>,
     hypershift_fallthrough: Option<bool>,
     hypershift_led_mask: Option<u8>,
     default_profile: Option<String>,
@@ -78,6 +87,11 @@ impl Config {
             Some(_) => return Err(ConfigError::BadTapTerm),
             None => d.tap_term,
         };
+        let select_timeout = match raw.select_timeout_ms {
+            Some(ms) if (500..=60_000).contains(&ms) => Duration::from_millis(ms),
+            Some(_) => return Err(ConfigError::BadSelectTimeout),
+            None => d.select_timeout,
+        };
         if raw
             .hypershift_led_mask
             .is_some_and(|m| !(1..=7).contains(&m))
@@ -87,12 +101,14 @@ impl Config {
         let mode_switch = match raw.mode_switch.as_deref() {
             None | Some("double_tap") => ModeSwitch::DoubleTap,
             Some("tap") => ModeSwitch::Tap,
+            Some("select") => ModeSwitch::Select,
             Some(other) => return Err(ConfigError::BadModeSwitch(other.to_owned())),
         };
         Ok(Config {
             mode_switch,
             mode_key: raw.mode_key.map_or(Ok(d.mode_key), |s| s.parse())?,
             tap_term,
+            select_timeout,
             hypershift_fallthrough: raw
                 .hypershift_fallthrough
                 .unwrap_or(d.hypershift_fallthrough),
@@ -121,7 +137,24 @@ mod tests {
         let c = |v: &str| Config::from_toml(&format!("mode_switch = '{v}'"));
         assert_eq!(c("tap").unwrap().mode_switch, ModeSwitch::Tap);
         assert_eq!(c("double_tap").unwrap().mode_switch, ModeSwitch::DoubleTap);
+        assert_eq!(c("select").unwrap().mode_switch, ModeSwitch::Select);
         assert!(matches!(c("triple_tap"), Err(ConfigError::BadModeSwitch(s)) if s == "triple_tap"));
+    }
+
+    #[test]
+    fn select_timeout_is_configurable_and_bounded() {
+        assert_eq!(
+            Config::from_toml("select_timeout_ms = 2500")
+                .unwrap()
+                .select_timeout,
+            Duration::from_millis(2500)
+        );
+        for bad in ["0", "499", "60001"] {
+            assert!(matches!(
+                Config::from_toml(&format!("select_timeout_ms = {bad}")),
+                Err(ConfigError::BadSelectTimeout)
+            ));
+        }
     }
 
     #[test]

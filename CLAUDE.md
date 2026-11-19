@@ -18,7 +18,7 @@ Done: hardware discovery (0), `core` (1), daemon MVP (2), profile directory + li
 (3), D-Bus + CLI (4), window-based switching behind the opt-in `hyprland` feature (5),
 macros + Hypershift (6), per-key lighting (6b), GTK editor (7), input-remapper importer (8),
 packaging + README (9). The mode key supports
-two gestures (`mode_switch`, default `double_tap`).
+three gestures (`mode_switch`, default `double_tap`; `select` is an opt-in timed mode picker).
 
 All initial milestones are done. The GUI (`crates/gui`, plain gtk4-rs + libadwaita, not relm4; lighting edits preview on the pad
 through the daemon's `PreviewFrame`, unit tested in the daemon but not yet run on hardware)
@@ -55,9 +55,10 @@ Decisions (2026-11-19):
 - `crates/core` must stay free of I/O.
 - Key-release invariant: release what was pressed (`held[code]`), never re-look-up
   the current mode's table on key-up.
-- Mode key never emits output. Two gestures, chosen by `mode_switch`: `double_tap`
-  (default: Hypershift on press, two quick taps cycle modes) or `tap` (a single tap cycles;
-  Hypershift on the next input or after `tap_term`). Neither adds latency to other keys.
+- Mode key never emits output. Gestures, chosen by `mode_switch`: `double_tap`
+  (default: Hypershift on press, two quick taps cycle modes), `tap` (a single tap cycles;
+  Hypershift on the next input or after `tap_term`) or `select` (opt-in: two quick taps open
+  a timed, blinking-LED selection; D-pad up/down choose, a tap picks). Neither adds latency to other keys.
 - Lighting writes never block the input path (separate task, latest-wins channel).
 - Profile TOML files are the single source of truth; the GUI writes files atomically,
   the daemon reloads them.

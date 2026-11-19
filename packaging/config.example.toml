@@ -11,11 +11,18 @@ mode_key = "KEY_LEFTALT"
 #                 cycle the mode.
 #   "tap"         one quick tap cycles the mode; Hypershift starts when another key is
 #                 pressed, or after the key has been held for tap_term_ms.
+#   "select"      like "double_tap", but two quick taps open a selection: the mode LED
+#                 blinks, D-pad up/down choose a mode, and one tap of the mode key picks
+#                 it. With no input it is cancelled after select_timeout_ms.
 mode_switch = "double_tap"
 
 # What counts as quick, in milliseconds (1-5000): a tap must be shorter than this, and
 # in "double_tap" mode so must the gap between the two taps.
 tap_term_ms = 350
+
+# "select" only: how long the selection waits without input, in milliseconds
+# (500-60000), before it is cancelled.
+select_timeout_ms = 4000
 
 # Keys not bound in a mode's Hypershift layer behave as in the mode's normal layer.
 # Set to false to pass them through unchanged instead.
