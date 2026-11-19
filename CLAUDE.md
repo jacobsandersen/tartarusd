@@ -63,6 +63,6 @@ Decisions (2026-11-19):
 - Arch packaging lives in `packaging/arch/PKGBUILD` (split packages, builds from the checkout).
 - Daemon runs as a `systemd --user` service with udev `uaccess`; never require root.
 - Check both feature configs: `cargo clippy --all-targets -- -D warnings` and
-  `cargo clippy --all-targets --features tartarusd/hyprland -- -D warnings`.
+  `cargo clippy --all-targets --features tartarusd/hyprland,tartarusd-gui/hyprland -- -D warnings`.
 - Best practices throughout: `cargo clippy -- -D warnings`, `cargo fmt`, unit tests
   for each milestone, `tracing` for logs, typed errors (`thiserror`) in libraries.

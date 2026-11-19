@@ -555,7 +555,9 @@ fn content_page(ui: &Rc<Ui>) -> adw::NavigationPage {
     col.append(&group);
     sidebar::wire_profile_fields(ui);
 
-    col.append(&sidebar::rules_section(ui));
+    if cfg!(feature = "hyprland") {
+        col.append(&sidebar::rules_section(ui));
+    }
 
     let clamp = adw::Clamp::builder().maximum_size(980).child(&col).build();
     ui.w.scroll.set_child(Some(&clamp));

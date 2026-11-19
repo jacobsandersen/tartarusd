@@ -45,7 +45,9 @@ fi
 if [ "$build" = 1 ]; then
     if [ -n "$features" ]; then
         # shellcheck disable=SC2086
-        cargo build --release $pkgs --features "tartarusd/$features"
+        feat="tartarusd/$features"
+        [ "$gui" = 1 ] && feat="$feat,tartarusd-gui/$features"
+        cargo build --release $pkgs --features "$feat"
     else
         # shellcheck disable=SC2086
         cargo build --release $pkgs

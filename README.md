@@ -191,7 +191,8 @@ startup, so restart the service after editing it.
 
 ## Automatic profile switching
 
-Build with `--features hyprland` and add `[[match]]` rules to your profiles. A rule matches
+Build with `--features hyprland` and add `[[match]]` rules to your profiles (the editor shows
+the rules section only in builds with the feature). A rule matches
 the focused window by `class` (exact) and/or `title_regex`; every field set must match, and
 the first matching profile (by file name) wins. Selection is:
 
@@ -235,7 +236,7 @@ immediately, and the Tartarus goes back to behaving as a plain keyboard.
 
 ```sh
 cargo clippy --all-targets -- -D warnings
-cargo clippy --all-targets --features tartarusd/hyprland -- -D warnings
+cargo clippy --all-targets --features tartarusd/hyprland,tartarusd-gui/hyprland -- -D warnings
 cargo test
 cargo test -p tartarusd --features hyprland live -- --ignored   # needs Hyprland (read-only)
 cargo test -p tartarusd live_frame -- --ignored                 # briefly lights the pad
