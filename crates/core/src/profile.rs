@@ -326,6 +326,13 @@ led_mask = 2
         assert_eq!(p.modes[2].led_mask, LED_RED);
     }
 
+    #[test]
+    fn shipped_examples_parse() {
+        let p = Profile::from_toml(include_str!("../../../docs/examples/smoke-test.toml")).unwrap();
+        assert_eq!(p.modes.len(), 3);
+        assert!(p.modes[0].hypershift.is_some());
+    }
+
     fn err(src: &str) -> ProfileError {
         Profile::from_toml(src).unwrap_err()
     }

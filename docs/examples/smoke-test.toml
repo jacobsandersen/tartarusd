@@ -1,0 +1,21 @@
+# Obvious, harmless bindings for a first live run. Press 01 in a terminal or text
+# field and watch which letter appears:
+#   mode 1 (blue LED): a    tap the mode key -> mode 2 (green): b    -> mode 3 (red): c
+# Hold the mode key and press 01: x (Hypershift, mode unchanged).
+# Everything else passes through unchanged; the wheel scrolls as normal except mode 1,
+# where it sends PageUp/PageDown.
+name = "Smoke test"
+
+[mode.0]
+KEY_1 = "KEY_A"
+WHEEL_UP = "KEY_PAGEUP"
+WHEEL_DOWN = "KEY_PAGEDOWN"
+
+[mode.0.hypershift]
+KEY_1 = "KEY_X"
+
+[mode.1]
+KEY_1 = "KEY_B"
+
+[mode.2]
+KEY_1 = "KEY_C"
