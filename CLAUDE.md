@@ -14,9 +14,16 @@ Replaces input-remapper for this device.
 
 ## Status
 
-Milestone 0 (hardware discovery) is done: matrix map, live-frame update, and the
-input-remapper preset schema are all recorded in `docs/hardware.md`. Open: a preset
-sample with real (non-`disable`) bindings, needed only for the importer (milestone 8).
+Done: hardware discovery (0), `core` (1), daemon MVP (2), profile directory + live reload
+(3), D-Bus + CLI (4), window-based switching behind the opt-in `hyprland` feature (5),
+macros + Hypershift (6), per-key lighting (6b), packaging + README (9). The mode key supports
+two gestures (`mode_switch`, default `double_tap`).
+
+Remaining: the GTK GUI (7) and the input-remapper importer (8). The importer is blocked on a
+preset sample with real (non-`disable`) bindings; ask the user for one, don't guess the
+`output_symbol` forms. Everything above has unit tests; most of it has been run on the real
+device by the user, but verify before claiming hardware behavior (see docs/hardware.md for
+what is confirmed).
 
 Decision made: own daemon, NOT an xremap wrapper (rationale in DESIGN.md).
 

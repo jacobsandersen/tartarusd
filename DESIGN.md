@@ -378,8 +378,8 @@ Key crates: `evdev` (read + uinput `VirtualDevice`), `zbus`, `serde` + `toml`,
 
 ## Milestones
 
-0. **Hardware discovery** — mostly done (see `docs/hardware.md`). Remaining: run
-   `tools/led_probe.py` for the per-key matrix map; inspect an input-remapper preset.
+0. **Hardware discovery** — done (see `docs/hardware.md`): key codes, LED matrix map,
+   live frame updates, D-Bus path, input-remapper preset schema.
 1. **core** — model, TOML (de)serialization, validation, lookup logic; unit tests for
    the state machine incl. the held-key release invariant.
 2. **daemon MVP** — grab, 3-mode cycle, passthrough + chord actions, LED, single
@@ -391,7 +391,7 @@ Key crates: `evdev` (read + uinput `VirtualDevice`), `zbus`, `serde` + `toml`,
 6b. **Per-key lighting** — frames per mode and per Hypershift layer. Done.
 7. **GUI** (incl. per-key color editing on the same layout widget).
 8. **input-remapper importer.**
-9. **Packaging** — udev rule, systemd user unit, README.
+9. **Packaging** — udev rule, systemd user unit, installer, README. Done.
 
 ## Invariants / tests
 
