@@ -33,7 +33,10 @@ _features=${TARTARUSD_FEATURES-hyprland}
 
 pkgver() {
   cd tartarusd
-  printf '0.1.0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+  # The release version comes from Cargo.toml, which release-please bumps.
+  local ver
+  ver=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
+  printf '%s.r%s.g%s' "$ver" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
 }
 
 # Use the system toolchain even if a rustup proxy is earlier in PATH.
