@@ -108,6 +108,18 @@ Implications:
   `KEY_LEFTALT` (named `Hyper+NN`). Importer: leading code 56 → Hypershift layer.
 - `origin_hash` identifies the source device; ignore it on import.
 - `name` is the physical key label (`01`–`20`, `zzz. Left/Right/Up/Down` for the D-pad).
-- The sample has only `disable` mappings and no wheel mappings, so real
-  `output_symbol` forms (key names, macros) are still unseen; ask for one with real
-  bindings before writing the importer's symbol parsing.
+- **`output_symbol` forms, confirmed from a real preset
+  (`docs/inputremapper-tartarus-sample-real.json`, 43 mappings, all `mapping_type` =
+  `key_macro`, `target_uinput` = `keyboard`):**
+  - `disable`
+  - a single X keysym: lowercase letters and digits (`w`, `1`), and names such as `space`,
+    `Escape`, `Shift_L`
+  - a Linux key name used directly: `KEY_EQUAL`, `KEY_TAB`, `KEY_MINUS`
+  - a `+` chord of the above: `Shift_L+1`, `Shift_L+KEY_MINUS`
+- Keysyms resolve through the user's keyboard layout in input-remapper; the importer
+  assumes a US layout.
+- Not seen in any sample, so **not supported** by the importer (it reports and skips):
+  wheel / relative inputs (`type` 2), other `mapping_type`s, input-remapper macro syntax
+  (`key(a).wait(10)`), and input combinations other than a single key or `[mode key, key]`.
+- That real preset contains one entry that is not a valid symbol: `Hyper+10` outputs
+  `Shift_L+10` (labelled "Shift+0"). `10` is not a keysym, so it is reported, not guessed.

@@ -17,8 +17,8 @@ It replaces input-remapper for this device. It runs as a `systemd --user` servic
 root and no kernel code, on any desktop environment. Window-based profile switching is an
 opt-in build feature (Hyprland is the first supported compositor).
 
-> **Status:** the daemon, CLI, profiles, lighting and macros are working. The GTK GUI and
-> the input-remapper preset importer are not built yet; profiles are edited by hand.
+> **Status:** the daemon, CLI, profiles, lighting, macros and the input-remapper importer are
+> working. The GTK GUI is not built yet; profiles are edited by hand.
 
 ## Requirements
 
@@ -122,6 +122,21 @@ KEY_1 = "#ff0000"
 The full format, the rules for each field, and the design behind them are in
 [DESIGN.md](DESIGN.md). Verified hardware facts (key codes, LED matrix) are in
 [docs/hardware.md](docs/hardware.md).
+
+## Migrating from input-remapper
+
+```sh
+tartarusctl import ~/.config/input-remapper-2/presets/"Razer Razer Tartarus V2"/mine.json \
+    --name "Mine" --modes 3 --out ~/.config/tartarusd/profiles/mine.toml
+```
+
+The preset's single-key mappings become the base layer of mode 0, and its `Hyper+<key>`
+combinations become the mode-0 Hypershift layer. Anything it can't convert (wheel mappings,
+input-remapper macro syntax, key combinations, unknown symbols) is listed as a warning on
+stderr and skipped, never guessed, so fix those by hand in the result. Letters and keysym
+names are read as a US layout. Without `--out` the profile goes to stdout. With `--modes 2`
+or `3`, the extra modes start empty (keys pass through). Check the result with
+`tartarusctl validate`.
 
 ## The mode key
 

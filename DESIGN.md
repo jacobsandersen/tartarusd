@@ -341,10 +341,28 @@ fails fast. The typed client proxy lives in `crates/ipc`.
   can't leave the device dead.
 - Signals are emitted from a separate task; the input path never waits on the bus.
 
+## input-remapper importer (`core::import`)
+
+Converts an input-remapper 2.x preset (a JSON array of mappings) into a tartarusd profile.
+Pure; the CLI does the file I/O. Only forms confirmed in real presets are converted
+(`docs/hardware.md`); everything else is **reported and skipped, never guessed**.
+
+- A single-key mapping becomes a base-layer binding. `[mode key, key]` (the Tartarus
+  Hypershift, `KEY_LEFTALT` by default) becomes the mode-0 Hypershift layer.
+- `output_symbol`: `disable`, a keysym, a `KEY_*`/`BTN_*` name, or a `+` chord of those.
+  Keysyms assume a US layout. An uppercase keysym is rejected with a hint to write
+  `Shift_L+x`.
+- Skipped with a message: other mapping types, wheel/relative inputs, input-remapper macro
+  syntax, other key combinations, unknown key codes, unknown symbols, and duplicate bindings
+  (the first wins).
+- The preset's bindings go to mode 0; `--modes 2|3` adds empty modes (keys pass through).
+- Fails only if the JSON is not a preset or nothing converts at all. The result is
+  produced by `Profile::to_toml` and re-validated before it is written.
+
 ## CLI (`crates/cli`) — `tartarusctl`
 
 `state`, `list`, `activate <name>`, `unpin`, `mode <n>`, `validate <file>` (offline, no
-daemon needed), and `monitor` (prints signals as they happen, for debugging and scripts).
+daemon needed), `import <preset.json>` (offline; see the importer section), and `monitor` (prints signals as they happen, for debugging and scripts).
 
 ## GUI (`crates/gui`)
 
@@ -355,7 +373,8 @@ daemon needed), and `monitor` (prints signals as they happen, for debugging and 
 - Physical-key identification through daemon `StartCapture()` + `KeyCaptured`.
 - Profile editor for match rules with a "use current window" button (available only when a window-source backend,
   e.g. `hyprland`, is compiled in).
-- Import from input-remapper presets → `mode.0` of a new profile.
+- Import from input-remapper presets → `mode.0` of a new profile. (The conversion itself
+  is `tartarusctl import` / `core::import`; the GUI will just call it.)
 
 ## Workspace layout
 
@@ -390,7 +409,7 @@ Key crates: `evdev` (read + uinput `VirtualDevice`), `zbus`, `serde` + `toml`,
 6. **Macros + hypershift layer.** Done (Hypershift landed with the core state machine).
 6b. **Per-key lighting** — frames per mode and per Hypershift layer. Done.
 7. **GUI** (incl. per-key color editing on the same layout widget).
-8. **input-remapper importer.**
+8. **input-remapper importer.** Done: `core::import` + `tartarusctl import`.
 9. **Packaging** — udev rule, systemd user unit, installer, README. Done.
 
 ## Invariants / tests
