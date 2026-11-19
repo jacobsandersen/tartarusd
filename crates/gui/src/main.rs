@@ -7,6 +7,7 @@ mod complete;
 mod daemon;
 mod edit;
 mod layout;
+mod settings;
 mod store;
 mod text;
 mod ui;

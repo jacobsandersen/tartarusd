@@ -19,6 +19,7 @@ tartarusd-core = { path = "../core" }
 tartarusd-ipc = { path = "../ipc" }
 thiserror.workspace = true
 toml.workspace = true
+toml_edit = "0.25.19"
 zbus = "6.3.0"
 
 [features]

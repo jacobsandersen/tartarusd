@@ -430,6 +430,10 @@ daemon needed), `import <preset.json>` (offline; see the importer section), and 
 - Click key → choose binding: record chord (captured from the regular keyboard via
   GTK, fine because only the Tartarus is grabbed), macro editor, or mode action.
 - Physical-key identification through daemon `StartCapture()` + `KeyCaptured`.
+- Settings dialog (menu → Settings…): edits `config.toml` through `toml_edit` (comments and
+  options it doesn't show are kept), validated with `Config::from_toml` before an atomic
+  write. The daemon reads the config only at startup, so after saving, if the daemon is
+  running, the GUI offers `systemctl --user restart tartarusd.service`.
 - Profile editor for match rules with a "use current window" button (available only when a window-source backend,
   e.g. `hyprland`, is compiled in).
 - Import from input-remapper presets → `mode.0` of a new profile. (The conversion itself
