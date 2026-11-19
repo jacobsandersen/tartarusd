@@ -30,25 +30,20 @@ fn action_value(a: &Action) -> Value {
             Value::Table(t)
         }
         Action::Macro(steps) => {
-            // A press followed at once by its release is written as a tap.
-            let mut lines = Vec::new();
-            let mut i = 0;
-            while i < steps.len() {
-                let s = &steps[i];
-                let tap = s.edge == Edge::Down
-                    && steps
-                        .get(i + 1)
-                        .is_some_and(|n| n.key == s.key && n.edge == Edge::Up && n.delay_ms == 0);
-                if tap {
-                    lines.push(format!("{} {}", s.key, s.delay_ms));
-                    i += 2;
-                } else {
-                    let edge = if s.edge == Edge::Down { "down" } else { "up" };
-                    lines.push(format!("{} {edge} {}", s.key, s.delay_ms));
-                    i += 1;
-                }
-            }
-            let steps = lines.into_iter().map(Value::String).collect();
+            let steps = steps
+                .iter()
+                .map(|s| {
+                    let edge = match s.edge {
+                        Edge::Down => "down",
+                        Edge::Up => "up",
+                    };
+                    Value::Array(vec![
+                        s.key.to_string().into(),
+                        edge.into(),
+                        Value::Integer(i64::from(s.delay_ms)),
+                    ])
+                })
+                .collect();
             let mut t = Table::new();
             t.insert("macro".into(), Value::Array(steps));
             Value::Table(t)
@@ -168,7 +163,7 @@ KEY_3 = "disabled"
 KEY_4 = "passthrough"
 KEY_5 = "next_mode"
 KEY_Q = { set_mode = 2 }
-KEY_W = { macro = ["KEY_LEFTSHIFT down 0", "KEY_A 30", "KEY_LEFTSHIFT up 5"] }
+KEY_W = { macro = [["KEY_LEFTSHIFT", "down", 0], ["KEY_A", 30], ["KEY_LEFTSHIFT", "up", 5]] }
 WHEEL_UP = "KEY_PAGEUP"
 BTN_MIDDLE = "KEY_ENTER"
 [mode.0.hypershift]

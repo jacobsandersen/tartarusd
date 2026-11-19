@@ -93,7 +93,7 @@ KEY_2 = "KEY_LEFTCTRL+KEY_C"  # a chord
 KEY_3 = "disabled"            # swallow it
 KEY_4 = "next_mode"
 KEY_5 = { set_mode = 2 }
-KEY_Q = { macro = ["KEY_E", "KEY_F 50"] }   # tap E, then F 50 ms later
+KEY_Q = { macro = [["KEY_E", 0], ["KEY_F", 50]] }   # tap E, then F 50 ms later
 WHEEL_UP = "KEY_PAGEUP"
 
 [mode.0.hypershift]           # the layer while the mode key is held
@@ -116,9 +116,7 @@ KEY_1 = "#ff0000"
 - **Modes** are `[mode.0]`, `[mode.1]`, ...: up to 3 by default, up to 7 with
   `extended_modes = true`.
 - **Macros** must be balanced (every key they press is released by the end). Each step is
-  a string: `"KEY_E 50"` taps E after 50 ms (the delay is optional), `"KEY_LEFTSHIFT down 0"` /
-  `"KEY_LEFTSHIFT up 100"` press and release separately. (The older array form
-  `["KEY_E", 50]` still loads.)
+  `[key, delay_ms]` (a tap) or `[key, "down"|"up", delay_ms]`.
 - **Lighting is per profile, opt-in.** A profile with no `lighting` never touches the key
   matrix. One that defines any owns it: modes without a frame go dark. Switching to a
   profile without lighting hands the pad back to OpenRazer's own effect.

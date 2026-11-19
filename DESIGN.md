@@ -110,7 +110,7 @@ class = "steam_app_1245620"   # window class / app id of Proton games
 [mode.0]
 led_mask = 1   # blue
 KEY_1 = "KEY_R"
-KEY_Q = { macro = ["KEY_E", "KEY_F 50"] }
+KEY_Q = { macro = [["KEY_E", 0], ["KEY_F", 50]] }
 
 [mode.1]
 led_mask = 2   # green
@@ -169,8 +169,7 @@ Global config (`~/.config/tartarusd/config.toml`): device match, `mode_key`,
 
 ## Macros
 
-A macro is a list of steps (`key`, `down`/`up`, `delay_ms` before the step), written as
-strings (`"KEY_E 50"`, `"KEY_LEFTSHIFT down 0"`; the array form still loads), run by the
+A macro is a list of steps (`key`, `down`/`up`, `delay_ms` before the step), run by the
 state machine itself: `Machine::tick(now)` performs steps that are due, and
 `next_deadline()` tells the daemon when to wake. There is no separate task or timer
 thread, so macros are deterministic under test and cancellation is trivial.

@@ -7,14 +7,12 @@
 //! KEY_4 = "passthrough"                  # explicit default
 //! KEY_5 = "next_mode"
 //! KEY_6 = { set_mode = 1 }
-//! KEY_Q = { macro = ["KEY_E", "KEY_F 50"] }   # tap E, then 50 ms later tap F
-//! KEY_W = { macro = ["KEY_LEFTSHIFT down 0", "KEY_A 10", "KEY_LEFTSHIFT up 10"] }
+//! KEY_Q = { macro = [["KEY_E", 0], ["KEY_F", 50]] }   # tap E, then 50 ms later tap F
+//! KEY_W = { macro = [["KEY_LEFTSHIFT", "down", 0], ["KEY_A", 10], ["KEY_LEFTSHIFT", "up", 10]] }
 //! ```
 //!
-//! Macro steps are strings: `"KEY 50"` (a tap: down then up, 50 ms delay before the down;
-//! the delay may be omitted) or `"KEY down|up 50"`. The array forms `["KEY", 50]` and
-//! `["KEY", "down", 50]` are accepted too, but TOML 1.0's mixed-type arrays trip older
-//! editors, so strings are what gets written. A macro must be balanced: every key it presses is
+//! Macro steps are `[key, delay_ms]` (a tap: down then up, delay before the down) or
+//! `[key, "down"|"up", delay_ms]`. A macro must be balanced: every key it presses is
 //! released by the end, and it never releases a key it did not press.
 
 use std::sync::Arc;
@@ -121,36 +119,6 @@ fn delay(v: &toml::Value) -> Result<u32, ActionError> {
         ))
 }
 
-/// A step is a string (`"KEY_E"`, `"KEY_E 50"`, `"KEY_LEFTSHIFT down 0"`) or the older
-/// array form (`["KEY_E", 50]`). Both become the same `[key, delay]` / `[key, edge, delay]`
-/// parts.
-fn step_parts(step: &toml::Value) -> Result<Vec<toml::Value>, ActionError> {
-    use toml::Value;
-    let bad = |why: &str| ActionError::BadMacro(why.into());
-    match step {
-        Value::Array(a) => Ok(a.clone()),
-        Value::String(s) => {
-            let words: Vec<&str> = s.split_whitespace().collect();
-            let num = |w: &str| {
-                w.parse::<i64>()
-                    .map(Value::Integer)
-                    .map_err(|_| bad("a step's delay must be an integer"))
-            };
-            match words.as_slice() {
-                [k] => Ok(vec![Value::String((*k).into()), Value::Integer(0)]),
-                [k, d] => Ok(vec![Value::String((*k).into()), num(d)?]),
-                [k, e, d] => Ok(vec![
-                    Value::String((*k).into()),
-                    Value::String((*e).into()),
-                    num(d)?,
-                ]),
-                _ => Err(bad("a step is `KEY [ms]` or `KEY down|up ms`")),
-            }
-        }
-        _ => Err(bad("each step must be a string or an array")),
-    }
-}
-
 fn parse_macro(v: &toml::Value) -> Result<Action, ActionError> {
     let steps = v.as_array().ok_or(ActionError::BadMacro(
         "`macro` must be an array of steps".into(),
@@ -160,7 +128,9 @@ fn parse_macro(v: &toml::Value) -> Result<Action, ActionError> {
     }
     let mut out = Vec::new();
     for step in steps {
-        let parts = step_parts(step)?;
+        let parts = step
+            .as_array()
+            .ok_or(ActionError::BadMacro("each step must be an array".into()))?;
         let key = parts
             .first()
             .and_then(|k| k.as_str())
@@ -316,29 +286,6 @@ mod tests {
             parse(&format!("{{ macro = [{steps}] }}")),
             Err(ActionError::BadMacro(e)) if e.contains("maximum")
         ));
-    }
-
-    #[test]
-    fn string_and_array_steps_are_equivalent() {
-        let strings = parse(r#"{ macro = ["KEY_E", "KEY_F down 50", "KEY_F up 5", "KEY_G 7"] }"#);
-        let arrays = parse(
-            r#"{ macro = [["KEY_E", 0], ["KEY_F", "down", 50], ["KEY_F", "up", 5], ["KEY_G", 7]] }"#,
-        );
-        assert_eq!(strings, arrays);
-        assert!(strings.is_ok());
-    }
-
-    #[test]
-    fn bad_string_steps_are_rejected() {
-        for bad in [
-            r#"{ macro = ["KEY_E soon"] }"#,
-            r#"{ macro = ["KEY_E up down 1 2"] }"#,
-            r#"{ macro = [""] }"#,
-            r#"{ macro = ["KEY_E sideways 5"] }"#,
-            r#"{ macro = [5] }"#,
-        ] {
-            assert!(parse(bad).is_err(), "{bad}");
-        }
     }
 
     #[test]
