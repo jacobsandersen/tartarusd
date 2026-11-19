@@ -1,15 +1,14 @@
-//! Profile LEDs via the OpenRazer daemon's D-Bus API (`org.razer`). OpenRazer is
-//! required; sysfs is never touched here (see docs/hardware.md, "OpenRazer D-Bus path").
+//! Profile LEDs (the three thumb-module LEDs) via the OpenRazer daemon's D-Bus API.
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 use tartarusd_core::profile::{LED_BLUE, LED_GREEN, LED_RED};
 use tokio::sync::watch;
-use tracing::{debug, error};
-use zbus::{Connection, Proxy};
+use tracing::error;
+use zbus::Proxy;
 
-const DEST: &str = "org.razer";
+use crate::razer::Razer;
+
 const LED_IFACE: &str = "razer.device.lighting.profile_led";
-const VID_PID: [i32; 2] = [0x1532, 0x022B];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Led {
@@ -58,28 +57,11 @@ pub struct RazerLeds {
 }
 
 impl RazerLeds {
-    /// Connect to openrazer-daemon and find the Tartarus V2 by VID:PID.
-    pub async fn connect() -> anyhow::Result<RazerLeds> {
-        let conn = Connection::session()
-            .await
-            .context("connecting to the session bus")?;
-        let devices = Proxy::new(&conn, DEST, "/org/razer", "razer.devices")
-            .await
-            .context("creating OpenRazer proxy")?;
-        let serials: Vec<String> = devices.call("getDevices", &()).await.context(
-            "openrazer-daemon is required but did not answer on org.razer (is it running?)",
-        )?;
-        for serial in serials {
-            let path = format!("/org/razer/device/{serial}");
-            let misc = Proxy::new(&conn, DEST, path.clone(), "razer.device.misc").await?;
-            let vid_pid: Vec<i32> = misc.call("getVidPid", &()).await?;
-            if vid_pid == VID_PID {
-                debug!(%serial, "found Tartarus V2 in openrazer-daemon");
-                let proxy = Proxy::new(&conn, DEST, path, LED_IFACE).await?;
-                return Ok(RazerLeds { proxy, last: None });
-            }
-        }
-        bail!("openrazer-daemon is running but does not list a Razer Tartarus V2 (1532:022b)")
+    pub async fn new(razer: &Razer) -> zbus::Result<RazerLeds> {
+        Ok(RazerLeds {
+            proxy: razer.proxy(LED_IFACE).await?,
+            last: None,
+        })
     }
 
     pub async fn apply(&mut self, mask: u8) -> anyhow::Result<()> {

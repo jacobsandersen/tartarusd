@@ -2,11 +2,11 @@
 //! profile reloads. Free of hardware and bus I/O (a [`Sink`] and channels stand in),
 //! so it is unit-testable.
 
-use std::{io, path::Path, time::Duration};
+use std::{io, path::Path, sync::Arc, time::Duration};
 
 use anyhow::Context;
 use evdev::InputEvent;
-use tartarusd_core::{ActiveWindow, Effect, Event, Machine, Profile, ProfileSet};
+use tartarusd_core::{ActiveWindow, Effect, Event, Machine, Payload, Profile, ProfileSet};
 use tokio::{
     sync::{mpsc, oneshot, watch},
     time::Instant,
@@ -59,6 +59,7 @@ pub struct App<S: Sink> {
     set: ProfileSet,
     sink: S,
     led_tx: watch::Sender<u8>,
+    frame_tx: watch::Sender<Option<Arc<Payload>>>,
     signals: mpsc::UnboundedSender<Signal>,
     /// The profile chosen at startup: the fallback when nothing is pinned or matched.
     default_name: String,
@@ -74,6 +75,7 @@ impl<S: Sink> App<S> {
         set: ProfileSet,
         sink: S,
         led_tx: watch::Sender<u8>,
+        frame_tx: watch::Sender<Option<Arc<Payload>>>,
         signals: mpsc::UnboundedSender<Signal>,
     ) -> App<S> {
         let default_name = machine.profile().name.clone();
@@ -82,6 +84,7 @@ impl<S: Sink> App<S> {
             set,
             sink,
             led_tx,
+            frame_tx,
             signals,
             default_name,
             pinned: None,
@@ -110,6 +113,9 @@ impl<S: Sink> App<S> {
             match e {
                 Effect::SetLed(mask) => {
                     self.led_tx.send_replace(mask);
+                }
+                Effect::SetFrame(frame) => {
+                    self.frame_tx.send_replace(frame);
                 }
                 Effect::ModeChanged(m) => {
                     info!(mode = m, "mode changed");
@@ -148,7 +154,7 @@ impl<S: Sink> App<S> {
         Ok(())
     }
 
-    fn swap(&mut self, profile: std::sync::Arc<Profile>) -> anyhow::Result<()> {
+    fn swap(&mut self, profile: Arc<Profile>) -> anyhow::Result<()> {
         info!(profile = %profile.name, "switching profile");
         self.signal(Signal::ProfileChanged(profile.name.clone()));
         let fx = self.machine.swap_profile(profile);
@@ -178,7 +184,7 @@ impl<S: Sink> App<S> {
 
     /// Which profile should be active: manual pin > window match > startup default.
     /// `None` only if even the default is gone; the caller then keeps the current one.
-    fn select(&self) -> Option<std::sync::Arc<Profile>> {
+    fn select(&self) -> Option<Arc<Profile>> {
         if let Some(p) = self.pinned.as_ref().and_then(|n| self.set.get(n)) {
             return Some(p.clone());
         }
@@ -325,6 +331,7 @@ mod tests {
         out: Rec,
         sigs: UnboundedReceiver<Signal>,
         led: watch::Receiver<u8>,
+        frame: watch::Receiver<Option<Arc<Payload>>>,
     }
 
     fn profile_text(name: &str, key1: &str) -> String {
@@ -345,15 +352,17 @@ mod tests {
         );
         let machine = Machine::new(Config::default(), set.pick(Some(start)).unwrap());
         let (led_tx, led) = watch::channel(machine.led());
+        let (frame_tx, frame) = watch::channel(machine.current_frame());
         let (sig_tx, sigs) = mpsc::unbounded_channel();
         let out = Rec::default();
-        let app = App::new(machine, set, out.clone(), led_tx, sig_tx);
+        let app = App::new(machine, set, out.clone(), led_tx, frame_tx, sig_tx);
         Fixture {
             dir,
             app,
             out,
             sigs,
             led,
+            frame,
         }
     }
 
@@ -624,6 +633,51 @@ mod tests {
         f.app.window_changed(win("browser")).unwrap();
         f.app.window_changed(win("game")).unwrap();
         assert_eq!(cmd(&mut f.app, Command::GetState).mode, 1);
+    }
+
+    fn lit(name: &str, key: &str, color: &str) -> String {
+        format!(
+            "name = '{name}'\n[mode.0]\n[mode.0.lighting]\ndefault = '#000000'\n{key} = '{color}'\n[mode.1]\n"
+        )
+    }
+
+    /// The color of the matrix cell for KEY_1 (row 0, col 0) in a published frame.
+    fn first_cell(f: &watch::Receiver<Option<Arc<Payload>>>) -> Option<[u8; 3]> {
+        f.borrow().as_ref().map(|p| [p[3], p[4], p[5]])
+    }
+
+    #[test]
+    fn lighting_follows_mode_and_profile_changes() {
+        let mut f = fixture(
+            &[
+                ("l.toml", lit("Lit", "KEY_1", "#ff0000")),
+                ("p.toml", profile_text("Plain", "KEY_A")),
+            ],
+            "Lit",
+        );
+        assert_eq!(
+            first_cell(&f.frame),
+            Some([255, 0, 0]),
+            "initial frame published"
+        );
+
+        // Mode 1 has no frame of its own: dark, because the profile owns the pad.
+        cmd(&mut f.app, |r| Command::SetMode(1, r)).unwrap();
+        assert_eq!(first_cell(&f.frame), Some([0, 0, 0]));
+
+        // Switching to a profile without lighting hands the pad back.
+        assert_eq!(
+            cmd(&mut f.app, |r| Command::Activate("Plain".into(), r)),
+            Ok(())
+        );
+        assert!(f.frame.borrow().is_none());
+
+        // And back again re-publishes (mode resets to 0).
+        assert_eq!(
+            cmd(&mut f.app, |r| Command::Activate("Lit".into(), r)),
+            Ok(())
+        );
+        assert_eq!(first_cell(&f.frame), Some([255, 0, 0]));
     }
 
     fn macro_fixture() -> Fixture {

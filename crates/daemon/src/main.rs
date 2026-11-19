@@ -5,7 +5,9 @@ mod device;
 mod emit;
 mod ipc;
 mod led;
+mod lighting;
 mod profiles;
+mod razer;
 mod translate;
 mod window;
 
@@ -97,7 +99,9 @@ async fn main() -> anyhow::Result<()> {
     info!(profile = %profile.name, modes = profile.modes.len(), available = set.len(), "loaded profiles");
 
     // Everything that can fail without side effects comes before grabbing the device.
-    let leds = led::RazerLeds::connect().await?;
+    let razer = razer::Razer::connect().await?;
+    let leds = led::RazerLeds::new(&razer).await?;
+    let lighting = lighting::Lighting::connect(&razer).await?;
     let outputs =
         emit::Outputs::new().context("creating uinput devices (is /dev/uinput accessible?)")?;
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<app::Command>(32);
@@ -138,9 +142,12 @@ async fn main() -> anyhow::Result<()> {
     let machine = Machine::new(cfg, profile);
     let (led_tx, led_rx) = watch::channel(machine.led());
     let led_task = tokio::spawn(led::run(leds, led_rx));
+    let (frame_tx, frame_rx) = watch::channel(machine.current_frame());
+    let frame_task = tokio::spawn(lighting::run(lighting, frame_rx));
+    let frame_tx_shutdown = frame_tx.clone();
     // The Sink needs the outputs; the shutdown path needs the LED sender too.
     let led_tx_shutdown = led_tx.clone();
-    let mut app = app::App::new(machine, set, outputs, led_tx, sig_tx);
+    let mut app = app::App::new(machine, set, outputs, led_tx, frame_tx, sig_tx);
 
     let (win_tx, mut win_rx) = mpsc::channel::<ActiveWindow>(16);
     let window_task = match window::start(win_tx) {
@@ -250,6 +257,10 @@ async fn main() -> anyhow::Result<()> {
     // Dropping the readers closes the device fds, which releases the grabs.
     readers.abort_all();
     while readers.join_next().await.is_some() {}
+    // Hand the pad's lighting back to OpenRazer, then restore the power-on LED.
+    frame_tx_shutdown.send_replace(None);
+    drop(frame_tx_shutdown);
+    let _ = tokio::time::timeout(Duration::from_secs(2), frame_task).await;
     led_tx_shutdown.send_replace(LED_BLUE); // power-on default
     drop(led_tx_shutdown);
     let _ = tokio::time::timeout(Duration::from_secs(2), led_task).await;

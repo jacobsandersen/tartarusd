@@ -14,6 +14,7 @@ use crate::{
     action::{Action, Step},
     config::Config,
     keys::{Edge, Key, PhysicalKey, WheelDir},
+    lighting::{Frame, Payload},
     profile::Profile,
 };
 
@@ -36,6 +37,9 @@ pub enum Effect {
     SetLed(u8),
     /// The active mode changed (for D-Bus signals).
     ModeChanged(u8),
+    /// Show this per-key frame, or `None` if the profile does not use lighting (the
+    /// daemon then hands the pad back). Emitted only when the displayed frame can change.
+    SetFrame(Option<Arc<Payload>>),
     /// Hypershift was entered (`true`) or left (`false`). Emitted before any LED change.
     ShiftChanged(bool),
 }
@@ -117,6 +121,25 @@ impl Machine {
         }
     }
 
+    /// The per-key frame that should currently be shown, or `None` if the active profile
+    /// does not use lighting. A mode with no frame of its own shows a dark one (the
+    /// profile has taken over the pad); Hypershift without its own frame keeps the
+    /// mode's.
+    pub fn current_frame(&self) -> Option<Arc<Payload>> {
+        if !self.profile.uses_lighting() {
+            return None;
+        }
+        let mode = &self.profile.modes[self.mode];
+        let frame = if self.is_shifted() {
+            mode.hypershift_lighting.as_ref().or(mode.lighting.as_ref())
+        } else {
+            mode.lighting.as_ref()
+        };
+        Some(Arc::new(
+            frame.map_or_else(|| Frame::default().render(), Frame::render),
+        ))
+    }
+
     pub fn handle(&mut self, now: Duration, ev: Event) -> Vec<Effect> {
         let mut fx = Vec::new();
         let mode_key = PhysicalKey::Key(self.cfg.mode_key);
@@ -174,6 +197,7 @@ impl Machine {
         self.profile = profile;
         fx.push(Effect::ModeChanged(self.mode()));
         fx.push(Effect::SetLed(self.led()));
+        fx.push(Effect::SetFrame(self.current_frame()));
         fx
     }
 
@@ -249,6 +273,7 @@ impl Machine {
                 if self.cfg.hypershift_led_mask.is_some() {
                     fx.push(Effect::SetLed(self.led()));
                 }
+                self.push_shift_frame(fx);
             }
             ModeKeyState::Idle => {}
         }
@@ -264,9 +289,18 @@ impl Machine {
             if self.cfg.hypershift_led_mask.is_some() {
                 fx.push(Effect::SetLed(self.led()));
             }
+            self.push_shift_frame(fx);
         }
         let action = self.lookup(pk);
         self.perform(now, pk, action, fx);
+    }
+
+    /// On entering or leaving Hypershift, update the frame only if this mode has a
+    /// Hypershift frame (otherwise nothing visible changes).
+    fn push_shift_frame(&self, fx: &mut Vec<Effect>) {
+        if self.profile.modes[self.mode].hypershift_lighting.is_some() {
+            fx.push(Effect::SetFrame(self.current_frame()));
+        }
     }
 
     fn lookup(&self, pk: PhysicalKey) -> Action {
@@ -338,6 +372,9 @@ impl Machine {
         self.mode = n;
         fx.push(Effect::ModeChanged(self.mode()));
         fx.push(Effect::SetLed(self.led()));
+        if self.profile.uses_lighting() {
+            fx.push(Effect::SetFrame(self.current_frame()));
+        }
     }
 
     fn key_down(&mut self, key: Key, fx: &mut Vec<Effect>) {
@@ -730,6 +767,82 @@ KEY_E = { macro = [["KEY_A", 100]] }
         let fx = m.tick(ms(10_000));
         let downs = fx.iter().filter(|e| **e == down("KEY_A")).count();
         assert_eq!(downs, MAX_RUNNING_MACROS);
+    }
+
+    const LIT: &str = r##"
+name = "L"
+[mode.0]
+KEY_1 = "KEY_A"
+[mode.0.lighting]
+default = "#000000"
+KEY_W = "#00ffff"
+[mode.0.hypershift_lighting]
+default = "#101010"
+[mode.1]
+[mode.1.lighting]
+default = "#0000ff"
+[mode.2]
+"##;
+
+    fn frames(fx: &[Effect]) -> Vec<Option<Arc<Payload>>> {
+        fx.iter()
+            .filter_map(|e| match e {
+                Effect::SetFrame(f) => Some(f.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// First color byte of a rendered frame's cell (row 1, col 2 = KEY_W).
+    fn w_cell(p: &Payload) -> [u8; 3] {
+        [p[21 + 3 + 6], p[21 + 3 + 7], p[21 + 3 + 8]]
+    }
+
+    #[test]
+    fn frames_follow_mode_and_hypershift() {
+        let mut m = Machine::new(Config::default(), profile(LIT));
+        assert_eq!(w_cell(&m.current_frame().unwrap()), [0, 255, 255]);
+
+        // Tap: mode 1 shows its own frame (default blue, KEY_W not overridden).
+        press(&mut m, 0, "KEY_LEFTALT");
+        let f = frames(&release(&mut m, 50, "KEY_LEFTALT"));
+        assert_eq!(w_cell(f[0].as_ref().unwrap()), [0, 0, 255]);
+
+        // Back to mode 0, then Hypershift: its frame, then restore on release.
+        m.set_mode(0);
+        press(&mut m, 1000, "KEY_LEFTALT");
+        let enter = frames(&press(&mut m, 1010, "KEY_1"));
+        assert_eq!(w_cell(enter[0].as_ref().unwrap()), [16, 16, 16]);
+        release(&mut m, 1020, "KEY_1");
+        let leave = frames(&release(&mut m, 1030, "KEY_LEFTALT"));
+        assert_eq!(w_cell(leave[0].as_ref().unwrap()), [0, 255, 255]);
+    }
+
+    #[test]
+    fn mode_without_a_frame_goes_dark_and_hypershift_keeps_the_mode_frame() {
+        let mut m = Machine::new(Config::default(), profile(LIT));
+        m.set_mode(2); // lighting profile, but mode 2 has no frame
+        assert_eq!(w_cell(&m.current_frame().unwrap()), [0, 0, 0]);
+
+        // Mode 1 has no hypershift_lighting: entering Hypershift changes no frame.
+        m.set_mode(1);
+        press(&mut m, 0, "KEY_LEFTALT");
+        assert!(frames(&press(&mut m, 10, "KEY_1")).is_empty());
+    }
+
+    #[test]
+    fn profiles_without_lighting_never_emit_frames_except_on_swap() {
+        let mut m = machine(); // PROFILE has no lighting
+        assert!(m.current_frame().is_none());
+        assert!(frames(&m.set_mode(1)).is_empty());
+        let swap = frames(&m.swap_profile(profile(LIT)));
+        assert!(swap[0].is_some());
+        let back = frames(&m.swap_profile(profile(PROFILE)));
+        assert_eq!(
+            back,
+            vec![None],
+            "hand the pad back on switching to an unlit profile"
+        );
     }
 
     struct Rng(u64);

@@ -15,6 +15,3 @@ tartarusd-core = { version = "0.1.0", path = "../core" }
 tartarusd-ipc = { version = "0.1.0", path = "../ipc" }
 tokio = { version = "1.54.1", features = ["rt", "macros", "signal"] }
 zbus = "6.3.0"
-
-[dev-dependencies]
-tempfile = "3.27.0"

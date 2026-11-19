@@ -753,7 +753,6 @@ dependencies = [
  "futures-util",
  "tartarusd-core",
  "tartarusd-ipc",
- "tempfile",
  "tokio",
  "zbus",
 ]
