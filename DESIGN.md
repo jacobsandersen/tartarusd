@@ -29,13 +29,13 @@ organized into per-game profiles.
 Decided 2026-11-19. Wrapping xremap fails on: tap/hold mode key with mode-preserving
 Hypershift, LED state synced to mode (xremap exposes no mode state), per-key lighting
 per mode/Hypershift with ordered, coalesced writes, per-profile mode memory, GUI key
-capture. Reused instead: OpenRazer kernel driver (LEDs), `evdev`, `zbus`, Hyprland IPC.
+capture. Reused instead: OpenRazer kernel driver (LEDs), `evdev`, `zbus`, and (opt-in) Hyprland IPC.
 xremap is reference reading only (check its license before borrowing code).
 
 ## Prior art (surveyed 2026-11-18)
 
 No existing project combines: Tartarus V2 + mode key cycling keymaps with LED
-feedback + per-game profiles + Hyprland auto-switch + GUI.
+feedback + per-game profiles + automatic window-based switching + GUI.
 
 | Project | Has | Missing |
 |---|---|---|
@@ -75,7 +75,7 @@ Record verified results in `docs/hardware.md` and update this table.
 │  evdev grab → state →    │◄─────────────────►│ CLI         │
 │  uinput out              │◄──── signals ────►│ bar widget  │ (mode indicator)
 │  LED via OpenRazer D-Bus │                   └─────────────┘
-│  Hyprland IPC listener   │◄── activewindow events (auto profile switch)
+│  window source (opt-in)  │◄── active-window events (auto profile switch)
 └──────────────────────────┘
 ```
 
@@ -105,7 +105,7 @@ name = "Elden Ring"
 remember_mode = true
 
 [[match]]
-class = "steam_app_1245620"   # Hyprland window class of Proton games
+class = "steam_app_1245620"   # window class / app id of Proton games
 
 [mode.0]
 led_mask = 1   # blue
@@ -134,8 +134,17 @@ Global config (`~/.config/tartarusd/config.toml`): device match, `mode_key`,
 - **Profile swap:** build new tables → release everything in `held` → atomic swap
   (`arc-swap`).
 - **Active profile precedence:** manual pin > auto-match > default.
-- **Auto-switch:** subscribe to Hyprland `socket2` (`$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock`),
-  `activewindow>>class,title` events; match against profile rules.
+- **Auto-switch (opt-in, compositor-specific):** the daemon core is desktop-independent
+  and works on any DE/WM. Automatic switching needs to know the active window, which
+  is compositor-specific, so it sits behind a small `WindowSource` abstraction that
+  yields `ActiveWindow { class, title }` events. Each backend is an opt-in cargo
+  feature, **off by default**; with none enabled, profile selection is manual pin >
+  default and `[[match]]` rules are parsed and kept but unused (profiles stay portable).
+  - Feature `hyprland`: subscribe to Hyprland `socket2`
+    (`$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock`),
+    `activewindow>>class,title` events.
+  - Other backends (X11, KDE, GNOME, sway, ...) can be added the same way later;
+    none are planned yet.
 - **Mode on profile switch:** restore last mode if `remember_mode`, else reset to 0.
 - **Capture mode:** while capturing, stop emitting output and send each physical
   key-down as a `KeyCaptured` signal (the GUI can't read the grabbed device itself).
@@ -256,7 +265,8 @@ expose it as an effect when the D-Bus server is built (milestone 4).
 - Click key → choose binding: record chord (captured from the regular keyboard via
   GTK, fine because only the Tartarus is grabbed), macro editor, or mode action.
 - Physical-key identification through daemon `StartCapture()` + `KeyCaptured`.
-- Profile editor for match rules with a "use current window" button (Hyprland IPC).
+- Profile editor for match rules with a "use current window" button (available only when a window-source backend,
+  e.g. `hyprland`, is compiled in).
 - Import from input-remapper presets → `mode.0` of a new profile.
 
 ## Workspace layout
@@ -265,7 +275,7 @@ expose it as an effect when the D-Bus server is built (milestone 4).
 Cargo.toml            # workspace
 crates/
   core/    # model, serde, validation, input-remapper importer — NO I/O
-  daemon/  # evdev, uinput, zbus server, hyprland listener
+  daemon/  # evdev, uinput, zbus server; window sources behind cargo features (hyprland)
   cli/     # tartarusctl
   gui/     # relm4 app, zbus client
 packaging/
@@ -288,7 +298,7 @@ Key crates: `evdev` (read + uinput `VirtualDevice`), `zbus`, `serde` + `toml`,
    hard-coded profile path.
 3. **profiles + reload** — profiles dir, inotify reload, atomic swap.
 4. **D-Bus + CLI.**
-5. **Hyprland auto-switch.**
+5. **Window-source abstraction + opt-in `hyprland` feature** (auto-switch).
 6. **Macros + hypershift layer.**
 6b. **Per-key lighting** — frames per mode and per Hypershift layer.
 7. **GUI** (incl. per-key color editing on the same layout widget).

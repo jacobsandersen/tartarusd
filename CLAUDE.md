@@ -1,11 +1,12 @@
 # tartarusd
 
 Rust workspace: userspace remapping daemon + CLI + GTK4 GUI for the Razer Tartarus V2
-on Linux (Hyprland). Restores Synapse-style keymaps: tapping the hyper/mode key cycles
+on Linux (any desktop environment). Restores Synapse-style keymaps: tapping the hyper/mode key cycles
 up to 7 modes (profile LEDs show the mode), holding it shifts into a per-mode
 Hypershift layer without changing mode. Each mode and Hypershift layer has its own
-per-key lighting. Bindings are organized as per-game profiles with Hyprland
-auto-switching. Replaces input-remapper for this device.
+per-key lighting. Bindings are organized as per-game profiles, with optional
+automatic switching by active window (Hyprland support is an opt-in cargo feature).
+Replaces input-remapper for this device.
 
 - Full design, data model, D-Bus interface, milestones: @DESIGN.md
 - Verified hardware facts (codes, nodes, LEDs): @docs/hardware.md
@@ -38,6 +39,9 @@ Decisions (2026-11-19):
 - Open input devices via `/dev/input/by-id/usb-Razer_Razer_Tartarus_V2-*` and sysfs via
   glob `0003:1532:022B.*`; instance/event numbers are not stable.
 - Do not hard-code anything listed as unverified in docs/hardware.md.
+- Desktop-independent by default: the daemon, CLI and GUI must work on any Linux DE or
+  window manager. Compositor-specific code (Hyprland today) lives behind an opt-in
+  cargo feature, off by default, and everything else must build and run without it.
 - `crates/core` must stay free of I/O.
 - Key-release invariant: release what was pressed (`held[code]`), never re-look-up
   the current mode's table on key-up.
