@@ -217,6 +217,13 @@ async fn main() -> anyhow::Result<()> {
                     break 'run Err(err);
                 }
             }
+            () = tokio::time::sleep_until(
+                    app.macro_deadline().map_or_else(Instant::now, |d| start + d)
+                ), if app.macro_deadline().is_some() => {
+                if let Err(err) = app.tick(start.elapsed()) {
+                    break 'run Err(err);
+                }
+            }
             Some(()) = changes.recv() => {
                 // Debounce without blocking input: just move the deadline.
                 reload_at = Some(Instant::now() + profiles::DEBOUNCE);

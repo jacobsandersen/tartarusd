@@ -32,8 +32,6 @@ pub enum Effect {
     Key { key: Key, edge: Edge },
     /// Forward one wheel notch (`REL_WHEEL` and `REL_WHEEL_HI_RES`).
     Wheel(WheelDir),
-    /// Run a timed macro (scheduled by the daemon).
-    RunMacro(Arc<[Step]>),
     /// Show this profile-LED mask (B=1, G=2, R=4).
     SetLed(u8),
     /// The active mode changed (for D-Bus signals).
@@ -51,6 +49,19 @@ enum ModeKeyState {
     Shifted,
 }
 
+/// A macro in flight. Its steps are performed by [`Machine::tick`].
+struct RunningMacro {
+    steps: Arc<[Step]>,
+    /// Index of the next step to perform.
+    next: usize,
+    /// When that step is due.
+    due: Duration,
+}
+
+/// Cap on concurrently running macros, so a stuck key or a flood of presses can't
+/// grow without bound. Presses beyond the cap are ignored.
+const MAX_RUNNING_MACROS: usize = 32;
+
 /// What to undo when a physical key is released.
 #[derive(Debug)]
 enum Held {
@@ -65,8 +76,10 @@ pub struct Machine {
     mode: usize,
     mode_key: ModeKeyState,
     held: HashMap<PhysicalKey, Held>,
-    /// Output keys currently down, with reference counts.
+    /// Output keys currently down, with reference counts. Macro steps use the same
+    /// counts as physical keys, so every down still has exactly one up.
     out: HashMap<Key, u32>,
+    macros: Vec<RunningMacro>,
     remembered: HashMap<String, usize>,
 }
 
@@ -79,6 +92,7 @@ impl Machine {
             mode_key: ModeKeyState::Idle,
             held: HashMap::new(),
             out: HashMap::new(),
+            macros: Vec::new(),
             remembered: HashMap::new(),
         }
     }
@@ -109,7 +123,7 @@ impl Machine {
         match ev {
             Event::Press(k) if k == mode_key => self.mode_key_down(now),
             Event::Release(k) if k == mode_key => self.mode_key_up(now, &mut fx),
-            Event::Press(k) => self.press(k, &mut fx),
+            Event::Press(k) => self.press(now, k, &mut fx),
             Event::Release(k) => self.release(k, &mut fx),
         }
         fx
@@ -122,10 +136,12 @@ impl Machine {
         fx
     }
 
-    /// Release every output key that is down. Used on shutdown, capture start, and
+    /// Cancel running macros and release every output key that is down. Used on shutdown, capture start, and
     /// profile swap. Physical keys still held stay "pressed": their later release is
     /// a no-op.
     pub fn release_all(&mut self) -> Vec<Effect> {
+        // Cancel running macros first: their remaining steps must not fire afterwards.
+        self.macros.clear();
         let mut keys: Vec<Key> = self.out.keys().copied().collect();
         keys.sort();
         self.out.clear();
@@ -161,6 +177,59 @@ impl Machine {
         fx
     }
 
+    /// Perform every macro step that is due at `now`. Call when [`Machine::next_deadline`]
+    /// arrives. Steps that are late run in order, each chained from `now`.
+    pub fn tick(&mut self, now: Duration) -> Vec<Effect> {
+        let mut fx = Vec::new();
+        self.run_due(now, &mut fx);
+        fx
+    }
+
+    /// When the next macro step is due, if any macro is running.
+    pub fn next_deadline(&self) -> Option<Duration> {
+        self.macros.iter().map(|m| m.due).min()
+    }
+
+    fn start_macro(&mut self, now: Duration, steps: Arc<[Step]>, fx: &mut Vec<Effect>) {
+        if self.macros.len() >= MAX_RUNNING_MACROS || steps.is_empty() {
+            return;
+        }
+        let due = now + Duration::from_millis(u64::from(steps[0].delay_ms));
+        self.macros.push(RunningMacro {
+            steps,
+            next: 0,
+            due,
+        });
+        // A zero-delay first step happens now: macros add no latency of their own.
+        self.run_due(now, fx);
+    }
+
+    fn run_due(&mut self, now: Duration, fx: &mut Vec<Effect>) {
+        let mut i = 0;
+        while i < self.macros.len() {
+            let mut finished = false;
+            while !finished && self.macros[i].due <= now {
+                let m = &mut self.macros[i];
+                let (key, edge) = (m.steps[m.next].key, m.steps[m.next].edge);
+                m.next += 1;
+                if m.next < m.steps.len() {
+                    m.due = now + Duration::from_millis(u64::from(m.steps[m.next].delay_ms));
+                } else {
+                    finished = true;
+                }
+                match edge {
+                    Edge::Down => self.key_down(key, fx),
+                    Edge::Up => self.key_up(key, fx),
+                }
+            }
+            if finished {
+                self.macros.remove(i);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
     fn mode_key_down(&mut self, now: Duration) {
         if matches!(self.mode_key, ModeKeyState::Idle) {
             self.mode_key = ModeKeyState::Pending(now);
@@ -185,7 +254,7 @@ impl Machine {
         }
     }
 
-    fn press(&mut self, pk: PhysicalKey, fx: &mut Vec<Effect>) {
+    fn press(&mut self, now: Duration, pk: PhysicalKey, fx: &mut Vec<Effect>) {
         if self.held.contains_key(&pk) {
             return; // auto-repeat
         }
@@ -197,7 +266,7 @@ impl Machine {
             }
         }
         let action = self.lookup(pk);
-        self.perform(pk, action, fx);
+        self.perform(now, pk, action, fx);
     }
 
     fn lookup(&self, pk: PhysicalKey) -> Action {
@@ -218,7 +287,7 @@ impl Machine {
         found.cloned().unwrap_or(Action::Passthrough)
     }
 
-    fn perform(&mut self, pk: PhysicalKey, action: Action, fx: &mut Vec<Effect>) {
+    fn perform(&mut self, now: Duration, pk: PhysicalKey, action: Action, fx: &mut Vec<Effect>) {
         let held = match action {
             Action::Passthrough => match pk {
                 PhysicalKey::Key(k) => {
@@ -238,7 +307,7 @@ impl Machine {
                 Held::Keys(keys)
             }
             Action::Macro(steps) => {
-                fx.push(Effect::RunMacro(steps));
+                self.start_macro(now, steps, fx);
                 Held::Nothing
             }
             Action::SetMode(n) => {
@@ -329,6 +398,7 @@ name = "A"
 [mode.0]
 KEY_1 = "KEY_R"
 KEY_2 = "KEY_LEFTCTRL+KEY_C"
+KEY_X = { macro = [["KEY_LEFTSHIFT", "down", 0], ["KEY_A", 30], ["KEY_LEFTSHIFT", "up", 30]] }
 KEY_3 = "disabled"
 WHEEL_UP = "KEY_PAGEUP"
 [mode.0.hypershift]
@@ -590,6 +660,78 @@ KEY_1 = "KEY_T"
         assert!(!b.contains(&Effect::ShiftChanged(true)));
     }
 
+    const MACROS: &str = r#"
+name = "M"
+[mode.0]
+KEY_Q = { macro = [["KEY_E", 0], ["KEY_F", 50]] }
+KEY_W = { macro = [["KEY_LEFTSHIFT", "down", 0], ["KEY_A", 30], ["KEY_LEFTSHIFT", "up", 30]] }
+KEY_E = { macro = [["KEY_A", 100]] }
+"#;
+
+    fn macro_machine() -> Machine {
+        Machine::new(Config::default(), profile(MACROS))
+    }
+
+    #[test]
+    fn macro_first_step_is_immediate_rest_wait_for_tick() {
+        let mut m = macro_machine();
+        // Delay 0: the first tap happens inside the press, adding no latency.
+        assert_eq!(press(&mut m, 0, "KEY_Q"), vec![down("KEY_E"), up("KEY_E")]);
+        assert_eq!(m.next_deadline(), Some(ms(50)));
+        assert!(m.tick(ms(49)).is_empty());
+        assert_eq!(m.tick(ms(50)), vec![down("KEY_F"), up("KEY_F")]);
+        assert_eq!(m.next_deadline(), None, "finished macros are dropped");
+        // Releasing the physical key never affects a macro.
+        assert!(release(&mut m, 60, "KEY_Q").is_empty());
+    }
+
+    #[test]
+    fn late_tick_catches_up_in_order_and_chains_from_now() {
+        let mut m = macro_machine();
+        assert_eq!(press(&mut m, 0, "KEY_W"), vec![down("KEY_LEFTSHIFT")]);
+        // The tick arrives far later than the 30 ms step: it still runs in order, and the
+        // next delay counts from now (no burst of back-to-back steps).
+        assert_eq!(m.tick(ms(500)), vec![down("KEY_A"), up("KEY_A")]);
+        assert_eq!(m.next_deadline(), Some(ms(530)));
+        assert_eq!(m.tick(ms(530)), vec![up("KEY_LEFTSHIFT")]);
+        assert_eq!(m.next_deadline(), None);
+    }
+
+    #[test]
+    fn swapping_profiles_cancels_macros_and_releases_their_keys() {
+        let mut m = macro_machine();
+        press(&mut m, 0, "KEY_W"); // Shift is now down, rest pending
+        let fx = m.swap_profile(profile("name='B'\n[mode.0]\n"));
+        assert_eq!(fx[0], up("KEY_LEFTSHIFT"));
+        assert!(
+            m.tick(ms(10_000)).is_empty(),
+            "cancelled macro must not fire"
+        );
+        assert_eq!(m.next_deadline(), None);
+    }
+
+    #[test]
+    fn release_all_cancels_macros() {
+        let mut m = macro_machine();
+        press(&mut m, 0, "KEY_Q");
+        assert!(m.next_deadline().is_some());
+        m.release_all();
+        assert_eq!(m.next_deadline(), None);
+    }
+
+    #[test]
+    fn running_macros_are_capped() {
+        let mut m = macro_machine();
+        for t in 0..40 {
+            press(&mut m, t, "KEY_E");
+            release(&mut m, t, "KEY_E");
+        }
+        // Each macro taps A once at 140 ms+; only MAX_RUNNING_MACROS were accepted.
+        let fx = m.tick(ms(10_000));
+        let downs = fx.iter().filter(|e| **e == down("KEY_A")).count();
+        assert_eq!(downs, MAX_RUNNING_MACROS);
+    }
+
     struct Rng(u64);
     impl Rng {
         fn next(&mut self) -> u64 {
@@ -606,6 +748,7 @@ KEY_1 = "KEY_T"
     fn fuzz_no_stuck_or_doubled_keys() {
         let other = profile(
             "name='O'\nextended_modes=true\n[mode.0]\nKEY_1='KEY_R'\nKEY_Q='KEY_R'\n\
+             KEY_X = { macro = [['KEY_R', 'down', 5], ['KEY_R', 'up', 5]] }\n\
              [mode.0.hypershift]\nKEY_2='KEY_LEFTSHIFT+KEY_A'\n[mode.1]\nKEY_Q='KEY_R+KEY_T'\n\
              [mode.2]\n[mode.3]\n",
         );
@@ -618,6 +761,7 @@ KEY_1 = "KEY_T"
             pk("KEY_9"),
             pk("KEY_Q"),
             pk("KEY_Z"),
+            pk("KEY_X"),
             PhysicalKey::Wheel(WheelDir::Up),
             PhysicalKey::Wheel(WheelDir::Down),
         ];
@@ -658,6 +802,13 @@ KEY_1 = "KEY_T"
                     m.set_mode((rng.next() % 4) as u8)
                 } else if r == 2 {
                     m.release_all()
+                } else if r < 8 {
+                    let fx = m.tick(ms(now));
+                    assert!(
+                        m.next_deadline().is_none_or(|d| d > ms(now)),
+                        "tick left a due step behind (seed {seed})"
+                    );
+                    fx
                 } else {
                     let input = inputs[(rng.next() % inputs.len() as u64) as usize];
                     if physical.remove(&input) {
@@ -672,6 +823,12 @@ KEY_1 = "KEY_T"
             for input in physical {
                 now += 1;
                 let fx = m.handle(ms(now), Event::Release(input));
+                apply(fx, &mut model);
+            }
+            // Let every running macro finish: balanced macros must leave nothing down.
+            while let Some(d) = m.next_deadline() {
+                now = now.max(d.as_millis() as u64);
+                let fx = m.tick(ms(now));
                 apply(fx, &mut model);
             }
             assert!(model.is_empty(), "stuck keys {model:?} (seed {seed})");

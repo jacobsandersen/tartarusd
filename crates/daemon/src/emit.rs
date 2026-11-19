@@ -21,7 +21,7 @@ pub struct Batches {
     pub mouse: Vec<InputEvent>,
 }
 
-/// Split effects into per-device event batches. LED, mode and macro effects are not
+/// Split effects into per-device event batches. LED, mode and shift effects are not
 /// output events and are ignored here.
 pub fn route(effects: &[Effect]) -> Batches {
     let mut b = Batches::default();
@@ -52,10 +52,7 @@ pub fn route(effects: &[Effect]) -> Batches {
                     sign * 120,
                 ));
             }
-            Effect::RunMacro(_)
-            | Effect::SetLed(_)
-            | Effect::ModeChanged(_)
-            | Effect::ShiftChanged(_) => {}
+            Effect::SetLed(_) | Effect::ModeChanged(_) | Effect::ShiftChanged(_) => {}
         }
     }
     b

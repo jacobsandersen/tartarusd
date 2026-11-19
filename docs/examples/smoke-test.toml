@@ -2,12 +2,15 @@
 # field and watch which letter appears:
 #   mode 1 (blue LED): a    tap the mode key -> mode 2 (green): b    -> mode 3 (red): c
 # Hold the mode key and press 01: x (Hypershift, mode unchanged).
+# Key 02 types "hi" as a macro (h, then i 100 ms later), in every mode where it is
+# bound (mode 1 only here).
 # Everything else passes through unchanged; the wheel scrolls as normal except mode 1,
 # where it sends PageUp/PageDown.
 name = "Smoke test"
 
 [mode.0]
 KEY_1 = "KEY_A"
+KEY_2 = { macro = [["KEY_H", 0], ["KEY_I", 100]] }
 WHEEL_UP = "KEY_PAGEUP"
 WHEEL_DOWN = "KEY_PAGEDOWN"
 

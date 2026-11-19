@@ -116,11 +116,21 @@ impl<S: Sink> App<S> {
                     self.signal(Signal::ModeChanged(m));
                 }
                 Effect::ShiftChanged(on) => self.signal(Signal::ShiftChanged(on)),
-                Effect::RunMacro(_) => warn!("macros are not implemented yet; ignoring"),
                 Effect::Key { .. } | Effect::Wheel(_) => {}
             }
         }
         Ok(())
+    }
+
+    /// When the next macro step is due (relative to the daemon's start), if any.
+    pub fn macro_deadline(&self) -> Option<Duration> {
+        self.machine.next_deadline()
+    }
+
+    /// Perform macro steps that are due at `now`.
+    pub fn tick(&mut self, now: Duration) -> anyhow::Result<()> {
+        let fx = self.machine.tick(now);
+        self.apply(fx)
     }
 
     /// Handle one raw event from a Tartarus node.
@@ -614,6 +624,35 @@ mod tests {
         f.app.window_changed(win("browser")).unwrap();
         f.app.window_changed(win("game")).unwrap();
         assert_eq!(cmd(&mut f.app, Command::GetState).mode, 1);
+    }
+
+    fn macro_fixture() -> Fixture {
+        let text = "name = 'M'\n[mode.0]\nKEY_1 = { macro = [['KEY_E', 0], ['KEY_F', 50]] }\n";
+        fixture(&[("m.toml", text.into())], "M")
+    }
+
+    #[test]
+    fn macros_run_on_ticks_and_report_their_deadline() {
+        let mut f = macro_fixture();
+        f.app.input(Duration::ZERO, &raw("KEY_1", 1)).unwrap();
+        assert_eq!(f.out.take_keys(), [down("KEY_E"), up("KEY_E")]);
+        assert_eq!(f.app.macro_deadline(), Some(Duration::from_millis(50)));
+        f.app.tick(Duration::from_millis(49)).unwrap();
+        assert!(f.out.take_keys().is_empty());
+        f.app.tick(Duration::from_millis(50)).unwrap();
+        assert_eq!(f.out.take_keys(), [down("KEY_F"), up("KEY_F")]);
+        assert_eq!(f.app.macro_deadline(), None);
+    }
+
+    #[test]
+    fn starting_capture_cancels_a_running_macro() {
+        let mut f = macro_fixture();
+        f.app.input(Duration::ZERO, &raw("KEY_1", 1)).unwrap();
+        f.out.take_keys();
+        cmd(&mut f.app, Command::StartCapture);
+        assert_eq!(f.app.macro_deadline(), None);
+        f.app.tick(Duration::from_secs(5)).unwrap();
+        assert!(f.out.take_keys().is_empty(), "no output while capturing");
     }
 
     #[test]
