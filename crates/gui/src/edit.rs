@@ -4,7 +4,8 @@
 //! returns an error without changing anything.
 
 use tartarusd_core::{
-    Action, Frame, Key, PhysicalKey, Profile, Rgb,
+    Action, Frame, Key, Light, PadEffect, PhysicalKey, Profile, Rgb, Travel,
+    lighting::{REACTIVE_MAX_SPEED, STARLIGHT_MAX_SPEED},
     profile::{DEFAULT_LED_MASKS, MAX_MODES_DEFAULT, MAX_MODES_EXTENDED, Mode},
 };
 
@@ -73,7 +74,7 @@ pub fn set_binding(
     }
 }
 
-pub fn frame(p: &Profile, mode: usize, layer: Layer) -> Option<&Frame> {
+fn light(p: &Profile, mode: usize, layer: Layer) -> Option<&Light> {
     let m = p.modes.get(mode)?;
     match layer {
         Layer::Base => m.lighting.as_ref(),
@@ -81,43 +82,141 @@ pub fn frame(p: &Profile, mode: usize, layer: Layer) -> Option<&Frame> {
     }
 }
 
-fn frame_slot(m: &mut Mode, layer: Layer) -> &mut Option<Frame> {
+/// The layer's per-key frame, if its lighting is key colors.
+pub fn frame(p: &Profile, mode: usize, layer: Layer) -> Option<&Frame> {
+    match light(p, mode, layer)? {
+        Light::Frame(f) => Some(f),
+        Light::Effect(_) => None,
+    }
+}
+
+/// The layer's firmware effect, if its lighting is an effect.
+pub fn effect(p: &Profile, mode: usize, layer: Layer) -> Option<&PadEffect> {
+    match light(p, mode, layer)? {
+        Light::Effect(e) => Some(e),
+        Light::Frame(_) => None,
+    }
+}
+
+fn light_slot(m: &mut Mode, layer: Layer) -> &mut Option<Light> {
     match layer {
         Layer::Base => &mut m.lighting,
         Layer::Hypershift => &mut m.hypershift_lighting,
     }
 }
 
-/// Give a layer its own lighting frame (all dark) or remove it.
-pub fn set_frame_enabled(p: &mut Profile, mode: usize, layer: Layer, on: bool) {
+fn frame_mut(m: &mut Mode, layer: Layer) -> Option<&mut Frame> {
+    match light_slot(m, layer) {
+        Some(Light::Frame(f)) => Some(f),
+        _ => None,
+    }
+}
+
+/// What a layer's lighting is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LightKind {
+    /// The layer sets nothing (Hypershift then keeps the mode's lighting).
+    Off,
+    Keys,
+    Effect,
+}
+
+pub fn kind(p: &Profile, mode: usize, layer: Layer) -> LightKind {
+    match light(p, mode, layer) {
+        None => LightKind::Off,
+        Some(Light::Frame(_)) => LightKind::Keys,
+        Some(Light::Effect(_)) => LightKind::Effect,
+    }
+}
+
+/// Change what a layer's lighting is. Choosing the kind it already has keeps its contents.
+pub fn set_kind(p: &mut Profile, mode: usize, layer: Layer, to: LightKind) {
+    if kind(p, mode, layer) == to {
+        return;
+    }
     let Some(m) = p.modes.get_mut(mode) else {
         return;
     };
-    let slot = frame_slot(m, layer);
-    match (on, slot.is_some()) {
-        (true, false) => *slot = Some(Frame::default()),
-        (false, true) => *slot = None,
-        _ => {}
+    *light_slot(m, layer) = match to {
+        LightKind::Off => None,
+        LightKind::Keys => Some(Light::Frame(Frame::default())),
+        LightKind::Effect => Some(Light::Effect(PadEffect::Spectrum)),
+    };
+}
+
+/// Change the layer's effect in place (no-op unless its lighting is an effect).
+pub fn update_effect(p: &mut Profile, mode: usize, layer: Layer, f: impl FnOnce(&mut PadEffect)) {
+    if let Some(Light::Effect(e)) = p
+        .modes
+        .get_mut(mode)
+        .and_then(|m| light_slot(m, layer).as_mut())
+    {
+        f(e);
+    }
+}
+
+/// The effect types the editor offers, in menu order.
+pub const EFFECT_TYPES: [&str; 5] = ["Spectrum", "Wave", "Breathing", "Reactive", "Starlight"];
+
+pub fn effect_type_index(e: &PadEffect) -> u32 {
+    match e {
+        PadEffect::Spectrum => 0,
+        PadEffect::Wave(_) => 1,
+        PadEffect::Breathing(_) => 2,
+        PadEffect::Reactive { .. } => 3,
+        PadEffect::Starlight { .. } => 4,
+    }
+}
+
+/// Switch to another effect type, carrying over colors and speed where they make sense.
+pub fn with_effect_type(old: &PadEffect, index: u32) -> PadEffect {
+    let colors: Vec<Rgb> = match old {
+        PadEffect::Breathing(c) | PadEffect::Starlight { colors: c, .. } => c.clone(),
+        PadEffect::Reactive { color, .. } => vec![*color],
+        _ => Vec::new(),
+    };
+    let speed = match old {
+        PadEffect::Reactive { speed, .. } | PadEffect::Starlight { speed, .. } => *speed,
+        _ => 2,
+    };
+    match index {
+        0 => PadEffect::Spectrum,
+        1 => PadEffect::Wave(match old {
+            PadEffect::Wave(d) => *d,
+            _ => Travel::Left,
+        }),
+        2 => PadEffect::Breathing(colors),
+        3 => PadEffect::Reactive {
+            color: colors.first().copied().unwrap_or(Rgb(255, 255, 255)),
+            speed: speed.min(REACTIVE_MAX_SPEED),
+        },
+        _ => PadEffect::Starlight {
+            colors: colors.into_iter().take(2).collect(),
+            speed: speed.min(STARLIGHT_MAX_SPEED),
+        },
+    }
+}
+
+/// Make a breathing or starlight effect use 0 (random), 1 or 2 colors.
+pub fn set_color_count(e: &mut PadEffect, n: usize) {
+    const DEFAULTS: [Rgb; 2] = [Rgb(255, 0, 0), Rgb(0, 0, 255)];
+    if let PadEffect::Breathing(c) | PadEffect::Starlight { colors: c, .. } = e {
+        c.truncate(n);
+        while c.len() < n.min(2) {
+            c.push(DEFAULTS[c.len()]);
+        }
     }
 }
 
 pub fn set_default_color(p: &mut Profile, mode: usize, layer: Layer, c: Rgb) {
-    if let Some(f) = p
-        .modes
-        .get_mut(mode)
-        .and_then(|m| frame_slot(m, layer).as_mut())
-    {
+    if let Some(f) = p.modes.get_mut(mode).and_then(|m| frame_mut(m, layer)) {
         f.default = c;
     }
 }
 
 /// Set one key's color, or clear it (`None`) so it shows the frame's default.
 pub fn set_color(p: &mut Profile, mode: usize, layer: Layer, key: Key, c: Option<Rgb>) {
-    if let Some(f) = p
-        .modes
-        .get_mut(mode)
-        .and_then(|m| frame_slot(m, layer).as_mut())
-    {
+    if let Some(f) = p.modes.get_mut(mode).and_then(|m| frame_mut(m, layer)) {
         match c {
             Some(c) => f.keys.insert(key, c),
             None => f.keys.remove(&key),
@@ -138,9 +237,20 @@ pub fn color_of(p: &Profile, mode: usize, layer: Layer, key: Key) -> Option<Rgb>
     Some(f.keys.get(&key).copied().unwrap_or(f.default))
 }
 
-/// The rendered frame to preview on the pad for this layer, if it has one.
-pub fn preview_payload(p: &Profile, mode: usize, layer: Layer) -> Option<Vec<u8>> {
-    frame(p, mode, layer).map(|f| f.render().to_vec())
+/// What to show on the pad while this layer is being edited.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Preview {
+    /// A rendered 84-byte frame.
+    Frame(Vec<u8>),
+    /// A firmware effect as TOML.
+    Effect(String),
+}
+
+pub fn preview(p: &Profile, mode: usize, layer: Layer) -> Option<Preview> {
+    match light(p, mode, layer)? {
+        Light::Frame(f) => Some(Preview::Frame(f.render().to_vec())),
+        Light::Effect(e) => Some(Preview::Effect(e.to_toml_string())),
+    }
 }
 
 pub fn max_modes(p: &Profile) -> usize {
@@ -335,19 +445,134 @@ mod tests {
             .iter()
             .map(|n| Key::from_name(n).unwrap())
             .collect();
-        assert_eq!(preview_payload(&p, 0, Layer::Base), None);
+        assert_eq!(preview(&p, 0, Layer::Base), None);
         assert_eq!(color_of(&p, 0, Layer::Base, keys[0]), None);
-        set_frame_enabled(&mut p, 0, Layer::Base, true);
+        set_kind(&mut p, 0, Layer::Base, LightKind::Keys);
         set_default_color(&mut p, 0, Layer::Base, Rgb(1, 1, 1));
         set_colors(&mut p, 0, Layer::Base, &keys, Some(Rgb(9, 8, 7)));
         validate(&p).unwrap();
         assert_eq!(color_of(&p, 0, Layer::Base, keys[2]), Some(Rgb(9, 8, 7)));
-        let frame = preview_payload(&p, 0, Layer::Base).unwrap();
+        let Some(Preview::Frame(frame)) = preview(&p, 0, Layer::Base) else {
+            panic!("a frame")
+        };
         assert_eq!(frame.len(), tartarusd_core::lighting::FRAME_LEN);
         assert_eq!(&frame[3..6], [9, 8, 7], "KEY_1 is row 0, col 0");
         set_colors(&mut p, 0, Layer::Base, &keys[..2], None);
         assert_eq!(color_of(&p, 0, Layer::Base, keys[0]), Some(Rgb(1, 1, 1)));
         assert_eq!(color_of(&p, 0, Layer::Base, keys[2]), Some(Rgb(9, 8, 7)));
+    }
+
+    #[test]
+    fn a_layer_has_key_colors_or_an_effect_and_switching_keeps_what_it_can() {
+        let mut p = blank("x");
+        assert_eq!(kind(&p, 0, Layer::Base), LightKind::Off);
+        set_kind(&mut p, 0, Layer::Base, LightKind::Keys);
+        set_default_color(&mut p, 0, Layer::Base, Rgb(5, 5, 5));
+        set_kind(&mut p, 0, Layer::Base, LightKind::Keys);
+        assert_eq!(
+            frame(&p, 0, Layer::Base).unwrap().default,
+            Rgb(5, 5, 5),
+            "same kind keeps it"
+        );
+        set_kind(&mut p, 0, Layer::Base, LightKind::Effect);
+        assert!(frame(&p, 0, Layer::Base).is_none());
+        assert_eq!(effect(&p, 0, Layer::Base), Some(&PadEffect::Spectrum));
+        validate(&p).unwrap();
+        update_effect(&mut p, 0, Layer::Base, |e| {
+            *e = PadEffect::Wave(Travel::Right)
+        });
+        assert!(matches!(
+            preview(&p, 0, Layer::Base),
+            Some(Preview::Effect(t)) if t.contains("wave") && t.contains("right")
+        ));
+        // Colors edits don't touch an effect layer.
+        set_color(
+            &mut p,
+            0,
+            Layer::Base,
+            Key::from_name("KEY_1").unwrap(),
+            Some(Rgb(1, 1, 1)),
+        );
+        assert_eq!(
+            effect(&p, 0, Layer::Base),
+            Some(&PadEffect::Wave(Travel::Right))
+        );
+        set_kind(&mut p, 0, Layer::Base, LightKind::Off);
+        assert!(!p.uses_lighting());
+    }
+
+    #[test]
+    fn color_counts_truncate_and_extend_with_defaults() {
+        let mut e = PadEffect::Breathing(vec![]);
+        set_color_count(&mut e, 2);
+        assert_eq!(
+            e,
+            PadEffect::Breathing(vec![Rgb(255, 0, 0), Rgb(0, 0, 255)])
+        );
+        set_color_count(&mut e, 1);
+        assert_eq!(e, PadEffect::Breathing(vec![Rgb(255, 0, 0)]));
+        set_color_count(&mut e, 0);
+        assert_eq!(e, PadEffect::Breathing(vec![]));
+        let mut s = PadEffect::Starlight {
+            colors: vec![Rgb(9, 9, 9)],
+            speed: 2,
+        };
+        set_color_count(&mut s, 2);
+        assert_eq!(
+            s,
+            PadEffect::Starlight {
+                colors: vec![Rgb(9, 9, 9), Rgb(0, 0, 255)],
+                speed: 2
+            }
+        );
+        let mut w = PadEffect::Wave(Travel::Left);
+        set_color_count(&mut w, 2);
+        assert_eq!(
+            w,
+            PadEffect::Wave(Travel::Left),
+            "other effects have no colors list"
+        );
+    }
+
+    #[test]
+    fn switching_effect_type_carries_colors_and_clamps_speed() {
+        let red = Rgb(255, 0, 0);
+        let star = PadEffect::Starlight {
+            colors: vec![red, Rgb(0, 0, 255)],
+            speed: 3,
+        };
+        assert_eq!(
+            with_effect_type(&star, 3),
+            PadEffect::Reactive {
+                color: red,
+                speed: 3
+            },
+            "first color carried, speed kept"
+        );
+        let reactive = PadEffect::Reactive {
+            color: red,
+            speed: 4,
+        };
+        assert_eq!(
+            with_effect_type(&reactive, 4),
+            PadEffect::Starlight {
+                colors: vec![red],
+                speed: 3
+            },
+            "starlight tops out at 3"
+        );
+        assert_eq!(with_effect_type(&reactive, 0), PadEffect::Spectrum);
+        assert_eq!(
+            with_effect_type(&PadEffect::Spectrum, 3),
+            PadEffect::Reactive {
+                color: Rgb(255, 255, 255),
+                speed: 2
+            }
+        );
+        for (i, name) in EFFECT_TYPES.iter().enumerate() {
+            let e = with_effect_type(&PadEffect::Spectrum, i as u32);
+            assert_eq!(effect_type_index(&e), i as u32, "{name}");
+        }
     }
 
     #[test]
@@ -359,7 +584,7 @@ mod tests {
             frame(&p, 0, Layer::Base).is_none(),
             "no frame, nothing to color"
         );
-        set_frame_enabled(&mut p, 0, Layer::Base, true);
+        set_kind(&mut p, 0, Layer::Base, LightKind::Keys);
         set_default_color(&mut p, 0, Layer::Base, Rgb(9, 9, 9));
         set_color(&mut p, 0, Layer::Base, w, Some(Rgb(1, 2, 3)));
         assert!(p.uses_lighting());
@@ -369,7 +594,7 @@ mod tests {
         assert_eq!(f.default, Rgb(9, 9, 9));
         set_color(&mut p, 0, Layer::Base, w, None);
         assert!(frame(&p, 0, Layer::Base).unwrap().keys.is_empty());
-        set_frame_enabled(&mut p, 0, Layer::Base, false);
+        set_kind(&mut p, 0, Layer::Base, LightKind::Off);
         assert!(!p.uses_lighting());
     }
 }

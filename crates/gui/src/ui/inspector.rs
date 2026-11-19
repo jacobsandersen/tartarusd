@@ -5,11 +5,14 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::glib;
-use tartarusd_core::{Action, Key, PhysicalKey, Rgb};
+use tartarusd_core::{
+    Action, Key, PadEffect, PhysicalKey, Rgb, Travel,
+    lighting::{REACTIVE_MAX_SPEED, STARLIGHT_MAX_SPEED},
+};
 
 use super::{State, Ui, View, clear, picker};
 use crate::{
-    edit::{self, Layer},
+    edit::{self, Layer, LightKind},
     layout, text,
 };
 
@@ -319,14 +322,18 @@ impl Ui {
     }
 
     fn lighting_inspector(self: &Rc<Self>) {
-        let (mode, layer, frame, keys, selected) = {
+        let (mode, layer, kind, frame, effect, keys, selected) = {
             let st = self.st.borrow();
-            let f = st
-                .draft
-                .as_ref()
-                .and_then(|d| edit::frame(d, st.mode, st.layer))
-                .cloned();
-            (st.mode, st.layer, f, lit_keys(&st), st.selection.len())
+            let d = st.draft.as_ref();
+            (
+                st.mode,
+                st.layer,
+                d.map_or(LightKind::Off, |d| edit::kind(d, st.mode, st.layer)),
+                d.and_then(|d| edit::frame(d, st.mode, st.layer)).cloned(),
+                d.and_then(|d| edit::effect(d, st.mode, st.layer)).cloned(),
+                lit_keys(&st),
+                st.selection.len(),
+            )
         };
         let b = &self.w.inspector;
         let title = gtk::Label::new(Some(&format!(
@@ -341,28 +348,45 @@ impl Ui {
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
         list.set_selection_mode(gtk::SelectionMode::None);
-        let own = adw::SwitchRow::builder()
-            .title("Custom lighting")
+        let kinds = adw::ComboRow::builder()
+            .title("Lighting")
             .subtitle(match layer {
-                Layer::Base => "Off: keys are dark if another mode sets colors.",
-                Layer::Hypershift => "Off: uses the mode's colors.",
+                Layer::Base => "Off: keys are dark if another mode sets lighting.",
+                Layer::Hypershift => "Off: uses the mode's lighting.",
             })
-            .active(frame.is_some())
+            .model(&gtk::StringList::new(&[
+                "Off",
+                "Key colors",
+                "Firmware effect",
+            ]))
+            .selected(match kind {
+                LightKind::Off => 0,
+                LightKind::Keys => 1,
+                LightKind::Effect => 2,
+            })
             .build();
-        list.append(&own);
+        list.append(&kinds);
         let ui = Rc::clone(self);
-        own.connect_active_notify(move |s| {
+        kinds.connect_selected_notify(move |r| {
             if ui.building.get() {
                 return;
             }
-            let on = s.is_active();
-            ui.edit(|p| edit::set_frame_enabled(p, mode, layer, on));
+            let to = match r.selected() {
+                0 => LightKind::Off,
+                1 => LightKind::Keys,
+                _ => LightKind::Effect,
+            };
+            ui.edit(|p| edit::set_kind(p, mode, layer, to));
             ui.rebuild_inspector();
         });
         b.append(&list);
 
+        if let Some(effect) = effect {
+            self.effect_controls(mode, layer, &effect);
+            return;
+        }
         let Some(frame) = frame else {
-            b.append(&dim("Turn on custom lighting to set key colors."));
+            b.append(&dim("Choose key colors or a firmware effect."));
             return;
         };
 
@@ -433,6 +457,135 @@ impl Ui {
         });
         expander.set_child(Some(&default.root));
         b.append(&expander);
+    }
+
+    /// Controls for a firmware effect: its type, direction, colors and speed.
+    fn effect_controls(self: &Rc<Self>, mode: usize, layer: Layer, effect: &PadEffect) {
+        let b = &self.w.inspector;
+        let list = gtk::ListBox::new();
+        list.add_css_class("boxed-list");
+        list.set_selection_mode(gtk::SelectionMode::None);
+
+        let ty = adw::ComboRow::builder()
+            .title("Effect")
+            .model(&gtk::StringList::new(&edit::EFFECT_TYPES))
+            .selected(edit::effect_type_index(effect))
+            .build();
+        let ui = Rc::clone(self);
+        ty.connect_selected_notify(move |r| {
+            if ui.building.get() {
+                return;
+            }
+            let index = r.selected();
+            ui.edit(|p| {
+                edit::update_effect(p, mode, layer, |e| *e = edit::with_effect_type(e, index));
+            });
+            ui.rebuild_inspector();
+        });
+        list.append(&ty);
+
+        if let PadEffect::Wave(d) = effect {
+            let dir = adw::ComboRow::builder()
+                .title("Direction")
+                .model(&gtk::StringList::new(&["Right to left", "Left to right"]))
+                .selected(u32::from(*d == Travel::Right))
+                .build();
+            let ui = Rc::clone(self);
+            dir.connect_selected_notify(move |r| {
+                if !ui.building.get() {
+                    let to = if r.selected() == 0 {
+                        Travel::Left
+                    } else {
+                        Travel::Right
+                    };
+                    ui.edit(|p| edit::update_effect(p, mode, layer, |e| *e = PadEffect::Wave(to)));
+                }
+            });
+            list.append(&dir);
+        }
+
+        let colors: Vec<Rgb> = match effect {
+            PadEffect::Breathing(c) | PadEffect::Starlight { colors: c, .. } => c.clone(),
+            PadEffect::Reactive { color, .. } => vec![*color],
+            _ => Vec::new(),
+        };
+        if matches!(
+            effect,
+            PadEffect::Breathing(_) | PadEffect::Starlight { .. }
+        ) {
+            let count = adw::ComboRow::builder()
+                .title("Colors")
+                .model(&gtk::StringList::new(&[
+                    "Random",
+                    "One color",
+                    "Two colors",
+                ]))
+                .selected(colors.len().min(2) as u32)
+                .build();
+            let ui = Rc::clone(self);
+            count.connect_selected_notify(move |r| {
+                if ui.building.get() {
+                    return;
+                }
+                let n = r.selected() as usize;
+                ui.edit(|p| edit::update_effect(p, mode, layer, |e| edit::set_color_count(e, n)));
+                ui.rebuild_inspector();
+            });
+            list.append(&count);
+        }
+
+        let max_speed = match effect {
+            PadEffect::Reactive { .. } => Some((REACTIVE_MAX_SPEED, effect_speed(effect))),
+            PadEffect::Starlight { .. } => Some((STARLIGHT_MAX_SPEED, effect_speed(effect))),
+            _ => None,
+        };
+        if let Some((max, current)) = max_speed {
+            let speed = adw::SpinRow::with_range(1.0, f64::from(max), 1.0);
+            speed.set_title("Speed");
+            speed.set_subtitle(&format!("1 to {max}"));
+            speed.set_value(f64::from(current));
+            let ui = Rc::clone(self);
+            speed.connect_value_notify(move |s| {
+                if ui.building.get() {
+                    return;
+                }
+                let v = s.value() as u8;
+                ui.edit(|p| {
+                    edit::update_effect(p, mode, layer, |e| match e {
+                        PadEffect::Reactive { speed, .. } | PadEffect::Starlight { speed, .. } => {
+                            *speed = v;
+                        }
+                        _ => {}
+                    });
+                });
+            });
+            list.append(&speed);
+        }
+        b.append(&list);
+
+        for (i, c) in colors.into_iter().enumerate() {
+            let expander = gtk::Expander::new(Some(&format!("Color {}", i + 1)));
+            expander.set_expanded(true);
+            let ui = Rc::clone(self);
+            let picker = picker::new(c, move |new| {
+                ui.edit(|p| {
+                    edit::update_effect(p, mode, layer, |e| match e {
+                        PadEffect::Breathing(cs) | PadEffect::Starlight { colors: cs, .. } => {
+                            if let Some(slot) = cs.get_mut(i) {
+                                *slot = new;
+                            }
+                        }
+                        PadEffect::Reactive { color, .. } if i == 0 => *color = new,
+                        _ => {}
+                    });
+                });
+            });
+            expander.set_child(Some(&picker.root));
+            b.append(&expander);
+        }
+        b.append(&dim(
+            "The pad runs this effect itself; there are no per-key colors.",
+        ));
     }
 
     /// Set the color of the selected keys that have a light (`None`: the default color).
@@ -571,4 +724,11 @@ fn lit_keys(st: &State) -> Vec<Key> {
             _ => None,
         })
         .collect()
+}
+
+fn effect_speed(e: &PadEffect) -> u8 {
+    match e {
+        PadEffect::Reactive { speed, .. } | PadEffect::Starlight { speed, .. } => *speed,
+        _ => 2,
+    }
 }

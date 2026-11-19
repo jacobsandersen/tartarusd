@@ -53,7 +53,7 @@ pub fn route(effects: &[Effect]) -> Batches {
                 ));
             }
             Effect::SetLed(_)
-            | Effect::SetFrame(_)
+            | Effect::SetPad(_)
             | Effect::ModeChanged(_)
             | Effect::ShiftChanged(_) => {}
         }

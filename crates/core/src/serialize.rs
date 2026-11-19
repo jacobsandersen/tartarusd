@@ -9,7 +9,7 @@ use toml::{Table, Value};
 use crate::{
     action::Action,
     keys::Edge,
-    lighting::Frame,
+    lighting::{Frame, Light},
     profile::{Layer, Mode, Profile},
 };
 
@@ -74,11 +74,23 @@ fn mode_table(m: &Mode) -> Table {
     if let Some(h) = &m.hypershift {
         t.insert("hypershift".into(), Value::Table(layer_table(h)));
     }
-    if let Some(f) = &m.lighting {
-        t.insert("lighting".into(), Value::Table(frame_table(f)));
-    }
-    if let Some(f) = &m.hypershift_lighting {
-        t.insert("hypershift_lighting".into(), Value::Table(frame_table(f)));
+    for (light, frame_key, effect_key) in [
+        (&m.lighting, "lighting", "effect"),
+        (
+            &m.hypershift_lighting,
+            "hypershift_lighting",
+            "hypershift_effect",
+        ),
+    ] {
+        match light {
+            Some(Light::Frame(f)) => {
+                t.insert(frame_key.into(), Value::Table(frame_table(f)));
+            }
+            Some(Light::Effect(e)) => {
+                t.insert(effect_key.into(), Value::Table(e.to_table()));
+            }
+            None => {}
+        }
     }
     t
 }
@@ -181,6 +193,17 @@ default = "#101010"
 [mode.3]
 "##,
         );
+    }
+
+    #[test]
+    fn firmware_effects_round_trip() {
+        let p = round_trips(
+            "name = 'E'\n[mode.0]\n[mode.0.effect]\ntype = 'starlight'\ncolors = ['#ff00ff']\nspeed = 3\n\
+             [mode.0.hypershift_effect]\ntype = 'wave'\ndirection = 'right'\n\
+             [mode.1]\n[mode.1.lighting]\ndefault = '#000000'\n[mode.1.hypershift_effect]\ntype = 'spectrum'\n",
+        );
+        assert!(p.to_toml().contains("[mode.0.effect]"));
+        assert!(p.to_toml().contains("[mode.0.hypershift_effect]"));
     }
 
     #[test]

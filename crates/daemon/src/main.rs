@@ -142,7 +142,7 @@ async fn main() -> anyhow::Result<()> {
     let machine = Machine::new(cfg, profile);
     let (led_tx, led_rx) = watch::channel(machine.led());
     let led_task = tokio::spawn(led::run(leds, led_rx));
-    let (frame_tx, frame_rx) = watch::channel(machine.current_frame());
+    let (frame_tx, frame_rx) = watch::channel(machine.current_pad());
     let frame_task = tokio::spawn(lighting::run(lighting, frame_rx));
     let frame_tx_shutdown = frame_tx.clone();
     // The Sink needs the outputs; the shutdown path needs the LED sender too.
@@ -262,7 +262,7 @@ async fn main() -> anyhow::Result<()> {
     readers.abort_all();
     while readers.join_next().await.is_some() {}
     // Hand the pad's lighting back to OpenRazer, then restore the power-on LED.
-    frame_tx_shutdown.send_replace(None);
+    frame_tx_shutdown.send_replace(tartarusd_core::Pad::Handback);
     drop(frame_tx_shutdown);
     let _ = tokio::time::timeout(Duration::from_secs(2), frame_task).await;
     led_tx_shutdown.send_replace(LED_BLUE); // power-on default

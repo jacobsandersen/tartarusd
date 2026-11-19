@@ -14,7 +14,7 @@ use crate::{
     action::{Action, Step},
     config::{Config, ModeSwitch},
     keys::{Edge, Key, PhysicalKey, WheelDir},
-    lighting::{Frame, Payload},
+    lighting::{Frame, Light, Pad},
     profile::Profile,
 };
 
@@ -37,9 +37,9 @@ pub enum Effect {
     SetLed(u8),
     /// The active mode changed (for D-Bus signals).
     ModeChanged(u8),
-    /// Show this per-key frame, or `None` if the profile does not use lighting (the
-    /// daemon then hands the pad back). Emitted only when the displayed frame can change.
-    SetFrame(Option<Arc<Payload>>),
+    /// Show this on the pad: a per-key frame, a firmware effect, or [`Pad::Handback`] if the
+    /// profile does not use lighting. Emitted only when what is shown can change.
+    SetPad(Pad),
     /// Hypershift was entered (`true`) or left (`false`). Emitted before any LED change.
     ShiftChanged(bool),
 }
@@ -136,23 +136,24 @@ impl Machine {
         }
     }
 
-    /// The per-key frame that should currently be shown, or `None` if the active profile
-    /// does not use lighting. A mode with no frame of its own shows a dark one (the
-    /// profile has taken over the pad); Hypershift without its own frame keeps the
-    /// mode's.
-    pub fn current_frame(&self) -> Option<Arc<Payload>> {
+    /// What the pad should show now. A profile that uses no lighting at all hands the pad
+    /// back. Otherwise a mode with nothing of its own shows a dark frame (the profile has
+    /// taken over the pad), and Hypershift without its own lighting keeps the mode's.
+    pub fn current_pad(&self) -> Pad {
         if !self.profile.uses_lighting() {
-            return None;
+            return Pad::Handback;
         }
         let mode = &self.profile.modes[self.mode];
-        let frame = if self.is_shifted() {
+        let light = if self.is_shifted() {
             mode.hypershift_lighting.as_ref().or(mode.lighting.as_ref())
         } else {
             mode.lighting.as_ref()
         };
-        Some(Arc::new(
-            frame.map_or_else(|| Frame::default().render(), Frame::render),
-        ))
+        match light {
+            Some(Light::Effect(e)) => Pad::Effect(e.clone()),
+            Some(Light::Frame(f)) => Pad::Frame(Arc::new(f.render())),
+            None => Pad::Frame(Arc::new(Frame::default().render())),
+        }
     }
 
     pub fn handle(&mut self, now: Duration, ev: Event) -> Vec<Effect> {
@@ -212,7 +213,7 @@ impl Machine {
         self.profile = profile;
         fx.push(Effect::ModeChanged(self.mode()));
         fx.push(Effect::SetLed(self.led()));
-        fx.push(Effect::SetFrame(self.current_frame()));
+        fx.push(Effect::SetPad(self.current_pad()));
         fx
     }
 
@@ -382,7 +383,7 @@ impl Machine {
     /// Hypershift frame (otherwise nothing visible changes).
     fn push_shift_frame(&self, fx: &mut Vec<Effect>) {
         if self.profile.modes[self.mode].hypershift_lighting.is_some() {
-            fx.push(Effect::SetFrame(self.current_frame()));
+            fx.push(Effect::SetPad(self.current_pad()));
         }
     }
 
@@ -456,7 +457,7 @@ impl Machine {
         fx.push(Effect::ModeChanged(self.mode()));
         fx.push(Effect::SetLed(self.led()));
         if self.profile.uses_lighting() {
-            fx.push(Effect::SetFrame(self.current_frame()));
+            fx.push(Effect::SetPad(self.current_pad()));
         }
     }
 
@@ -490,6 +491,7 @@ mod tests {
     use std::collections::HashSet;
 
     use super::*;
+    use crate::lighting::Payload;
 
     /// The single-tap gesture (the pre-`mode_switch` behavior) that most tests below cover.
     fn tap_cfg() -> Config {
@@ -966,10 +968,13 @@ default = "#0000ff"
 [mode.2]
 "##;
 
+    /// The pad changes in `fx`, as frames (`None` = hand the pad back).
     fn frames(fx: &[Effect]) -> Vec<Option<Arc<Payload>>> {
         fx.iter()
             .filter_map(|e| match e {
-                Effect::SetFrame(f) => Some(f.clone()),
+                Effect::SetPad(Pad::Frame(f)) => Some(Some(f.clone())),
+                Effect::SetPad(Pad::Handback) => Some(None),
+                Effect::SetPad(Pad::Effect(_)) => panic!("unexpected effect"),
                 _ => None,
             })
             .collect()
@@ -983,7 +988,10 @@ default = "#0000ff"
     #[test]
     fn frames_follow_mode_and_hypershift() {
         let mut m = Machine::new(tap_cfg(), profile(LIT));
-        assert_eq!(w_cell(&m.current_frame().unwrap()), [0, 255, 255]);
+        assert_eq!(
+            w_cell(&m.current_pad().frame().unwrap().clone()),
+            [0, 255, 255]
+        );
 
         // Tap: mode 1 shows its own frame (default blue, KEY_W not overridden).
         press(&mut m, 0, "KEY_LEFTALT");
@@ -1001,10 +1009,41 @@ default = "#0000ff"
     }
 
     #[test]
+    fn firmware_effects_follow_mode_and_hypershift_and_hand_back_when_absent() {
+        use crate::lighting::{PadEffect, Travel};
+        let text = r##"
+name = "E"
+[mode.0]
+[mode.0.effect]
+type = "wave"
+direction = "right"
+[mode.0.hypershift_lighting]
+default = "#101010"
+[mode.1]
+[mode.1.effect]
+type = "spectrum"
+[mode.2]
+"##;
+        let mut m = Machine::new(tap_cfg(), profile(text));
+        assert_eq!(m.current_pad(), Pad::Effect(PadEffect::Wave(Travel::Right)));
+        let fx = m.set_mode(1);
+        assert!(fx.contains(&Effect::SetPad(Pad::Effect(PadEffect::Spectrum))));
+        // A mode with nothing of its own is dark: the profile owns the pad.
+        let fx = m.set_mode(2);
+        assert!(matches!(
+            fx.iter().find_map(|e| match e {
+                Effect::SetPad(p) => Some(p),
+                _ => None,
+            }),
+            Some(Pad::Frame(_))
+        ));
+    }
+
+    #[test]
     fn mode_without_a_frame_goes_dark_and_hypershift_keeps_the_mode_frame() {
         let mut m = Machine::new(tap_cfg(), profile(LIT));
         m.set_mode(2); // lighting profile, but mode 2 has no frame
-        assert_eq!(w_cell(&m.current_frame().unwrap()), [0, 0, 0]);
+        assert_eq!(w_cell(&m.current_pad().frame().unwrap().clone()), [0, 0, 0]);
 
         // Mode 1 has no hypershift_lighting: entering Hypershift changes no frame.
         m.set_mode(1);
@@ -1015,7 +1054,7 @@ default = "#0000ff"
     #[test]
     fn profiles_without_lighting_never_emit_frames_except_on_swap() {
         let mut m = machine(); // PROFILE has no lighting
-        assert!(m.current_frame().is_none());
+        assert_eq!(m.current_pad(), Pad::Handback);
         assert!(frames(&m.set_mode(1)).is_empty());
         let swap = frames(&m.swap_profile(profile(LIT)));
         assert!(swap[0].is_some());

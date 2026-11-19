@@ -106,12 +106,253 @@ impl Frame {
     }
 }
 
+/// Which way a firmware wave travels, as seen looking at the pad.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Travel {
+    /// Right to left (OpenRazer `setWave(1)`, confirmed on the device).
+    Left,
+    /// Left to right (OpenRazer `setWave(2)`).
+    Right,
+}
+
+/// Highest speed value for [`PadEffect::Reactive`] (OpenRazer accepts 1..=4).
+pub const REACTIVE_MAX_SPEED: u8 = 4;
+/// Highest speed value for [`PadEffect::Starlight`].
+pub const STARLIGHT_MAX_SPEED: u8 = 3;
+
+/// A lighting effect run by the pad's firmware (through OpenRazer). It covers the whole
+/// pad and cannot be combined with per-key colors.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum PadEffect {
+    Spectrum,
+    Wave(Travel),
+    /// 0 colors = random, 1 = one color, 2 = two colors.
+    Breathing(Vec<Rgb>),
+    Reactive {
+        color: Rgb,
+        speed: u8,
+    },
+    /// 0 colors = random, 1 = one color, 2 = two colors.
+    Starlight {
+        colors: Vec<Rgb>,
+        speed: u8,
+    },
+}
+
+/// What a layer shows: per-key colors, or one firmware effect.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Light {
+    Frame(Frame),
+    Effect(PadEffect),
+}
+
+/// What the pad should be doing right now.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Pad {
+    /// Not ours: leave (or give back) the pad to OpenRazer's own effect.
+    Handback,
+    Frame(std::sync::Arc<Payload>),
+    Effect(PadEffect),
+}
+
+impl Pad {
+    pub fn frame(&self) -> Option<&std::sync::Arc<Payload>> {
+        match self {
+            Pad::Frame(f) => Some(f),
+            _ => None,
+        }
+    }
+}
+
+fn effect_err(msg: impl Into<String>) -> String {
+    msg.into()
+}
+
+fn colors_of(t: &toml::Table, key: &str, max: usize) -> Result<Vec<Rgb>, String> {
+    let Some(v) = t.get(key) else {
+        return Ok(Vec::new());
+    };
+    let arr = v
+        .as_array()
+        .ok_or_else(|| effect_err(format!("`{key}` must be a list of #rrggbb colors")))?;
+    if arr.len() > max {
+        return Err(effect_err(format!("`{key}` takes at most {max} colors")));
+    }
+    arr.iter()
+        .map(|c| {
+            c.as_str()
+                .ok_or_else(|| effect_err(format!("`{key}` must be a list of #rrggbb colors")))?
+                .parse::<Rgb>()
+                .map_err(|e| effect_err(e.to_string()))
+        })
+        .collect()
+}
+
+fn speed_of(t: &toml::Table, max: u8) -> Result<u8, String> {
+    match t.get("speed") {
+        None => Ok(2),
+        Some(v) => v
+            .as_integer()
+            .and_then(|n| u8::try_from(n).ok())
+            .filter(|n| (1..=max).contains(n))
+            .ok_or_else(|| effect_err(format!("`speed` must be 1..={max}"))),
+    }
+}
+
+impl PadEffect {
+    /// Parse an effect table: `type = "wave"`, `direction = "left"`, ... The error says
+    /// what is wrong.
+    pub fn from_table(t: &toml::Table) -> Result<PadEffect, String> {
+        let kind = t
+            .get("type")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| effect_err("an effect needs `type`"))?;
+        let allowed: &[&str] = match kind {
+            "spectrum" => &["type"],
+            "wave" => &["type", "direction"],
+            "breathing" => &["type", "colors"],
+            "reactive" => &["type", "color", "speed"],
+            "starlight" => &["type", "colors", "speed"],
+            other => {
+                return Err(effect_err(format!(
+                    "unknown effect type `{other}` (spectrum, wave, breathing, reactive, starlight)"
+                )));
+            }
+        };
+        if let Some(extra) = t.keys().find(|k| !allowed.contains(&k.as_str())) {
+            return Err(effect_err(format!(
+                "`{extra}` does not apply to a {kind} effect"
+            )));
+        }
+        Ok(match kind {
+            "spectrum" => PadEffect::Spectrum,
+            "wave" => PadEffect::Wave(match t.get("direction").and_then(|v| v.as_str()) {
+                None | Some("left") => Travel::Left,
+                Some("right") => Travel::Right,
+                Some(_) => return Err(effect_err("`direction` must be \"left\" or \"right\"")),
+            }),
+            "breathing" => PadEffect::Breathing(colors_of(t, "colors", 2)?),
+            "reactive" => PadEffect::Reactive {
+                color: t
+                    .get("color")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| effect_err("a reactive effect needs `color`"))?
+                    .parse()
+                    .map_err(|e: BadColor| effect_err(e.to_string()))?,
+                speed: speed_of(t, REACTIVE_MAX_SPEED)?,
+            },
+            _ => PadEffect::Starlight {
+                colors: colors_of(t, "colors", 2)?,
+                speed: speed_of(t, STARLIGHT_MAX_SPEED)?,
+            },
+        })
+    }
+
+    pub fn to_table(&self) -> toml::Table {
+        use toml::Value;
+        let mut t = toml::Table::new();
+        let colors =
+            |cs: &[Rgb]| Value::Array(cs.iter().map(|c| Value::String(c.to_string())).collect());
+        let ty = |t: &mut toml::Table, n: &str| t.insert("type".into(), Value::String(n.into()));
+        match self {
+            PadEffect::Spectrum => {
+                ty(&mut t, "spectrum");
+            }
+            PadEffect::Wave(d) => {
+                ty(&mut t, "wave");
+                let d = if *d == Travel::Left { "left" } else { "right" };
+                t.insert("direction".into(), Value::String(d.into()));
+            }
+            PadEffect::Breathing(cs) => {
+                ty(&mut t, "breathing");
+                t.insert("colors".into(), colors(cs));
+            }
+            PadEffect::Reactive { color, speed } => {
+                ty(&mut t, "reactive");
+                t.insert("color".into(), Value::String(color.to_string()));
+                t.insert("speed".into(), Value::Integer(i64::from(*speed)));
+            }
+            PadEffect::Starlight { colors: cs, speed } => {
+                ty(&mut t, "starlight");
+                t.insert("colors".into(), colors(cs));
+                t.insert("speed".into(), Value::Integer(i64::from(*speed)));
+            }
+        }
+        t
+    }
+
+    /// The effect as TOML text (used to preview it through the daemon).
+    pub fn to_toml_string(&self) -> String {
+        toml::to_string(&self.to_table()).expect("an effect always serializes")
+    }
+
+    pub fn from_toml_str(src: &str) -> Result<PadEffect, String> {
+        let t: toml::Table = src.parse().map_err(|e: toml::de::Error| e.to_string())?;
+        PadEffect::from_table(&t)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn k(n: &str) -> Key {
         Key::from_name(n).unwrap()
+    }
+
+    #[test]
+    fn effects_round_trip_through_toml() {
+        let c = |n: &str| n.parse::<Rgb>().unwrap();
+        for e in [
+            PadEffect::Spectrum,
+            PadEffect::Wave(Travel::Left),
+            PadEffect::Wave(Travel::Right),
+            PadEffect::Breathing(vec![]),
+            PadEffect::Breathing(vec![c("#00ffff")]),
+            PadEffect::Breathing(vec![c("#ff0000"), c("#0000ff")]),
+            PadEffect::Reactive {
+                color: c("#ff0000"),
+                speed: 4,
+            },
+            PadEffect::Starlight {
+                colors: vec![],
+                speed: 1,
+            },
+            PadEffect::Starlight {
+                colors: vec![c("#ff00ff"), c("#00ff00")],
+                speed: 3,
+            },
+        ] {
+            assert_eq!(PadEffect::from_toml_str(&e.to_toml_string()), Ok(e));
+        }
+    }
+
+    #[test]
+    fn effect_errors_say_what_is_wrong() {
+        let e = |s: &str| PadEffect::from_toml_str(s).unwrap_err();
+        assert!(e("").contains("needs `type`"));
+        assert!(e("type = 'disco'").contains("unknown effect type"));
+        assert!(e("type = 'spectrum'\nspeed = 2").contains("does not apply"));
+        assert!(e("type = 'wave'\ndirection = 'up'").contains("left"));
+        assert!(e("type = 'reactive'").contains("needs `color`"));
+        assert!(e("type = 'reactive'\ncolor = '#ff0000'\nspeed = 5").contains("1..=4"));
+        assert!(e("type = 'starlight'\nspeed = 4").contains("1..=3"));
+        assert!(e("type = 'breathing'\ncolors = ['#fff']").contains("#rrggbb"));
+        assert!(
+            e("type = 'breathing'\ncolors = ['#ff0000','#00ff00','#0000ff']").contains("at most 2")
+        );
+        // Defaults: wave goes left, speed is 2.
+        assert_eq!(
+            PadEffect::from_toml_str("type = 'wave'"),
+            Ok(PadEffect::Wave(Travel::Left))
+        );
+        assert_eq!(
+            PadEffect::from_toml_str("type = 'starlight'"),
+            Ok(PadEffect::Starlight {
+                colors: vec![],
+                speed: 2
+            })
+        );
     }
 
     #[test]

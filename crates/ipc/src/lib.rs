@@ -35,6 +35,8 @@ pub trait Daemon {
     /// Show a rendered 84-byte frame on the pad (see `tartarusd_core::lighting`). Ends after
     /// [`PREVIEW_TIMEOUT_SECS`] unless renewed.
     fn preview_frame(&self, frame: &[u8]) -> zbus::Result<()>;
+    /// Show a firmware effect, given as TOML (`type = "wave"`, ...), the same way.
+    fn preview_effect(&self, effect: &str) -> zbus::Result<()>;
     /// Go back to the profile's own lighting.
     fn clear_preview(&self) -> zbus::Result<()>;
 

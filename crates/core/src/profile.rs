@@ -10,7 +10,7 @@ use serde::Deserialize;
 use crate::{
     action::{Action, ActionError},
     keys::{Key, PhysicalKey},
-    lighting::{self, Frame, Rgb},
+    lighting::{self, Frame, Light, PadEffect, Rgb},
     window::ActiveWindow,
 };
 
@@ -95,10 +95,10 @@ pub struct Mode {
     pub led_mask: u8,
     pub bindings: Layer,
     pub hypershift: Option<Layer>,
-    /// Static per-key colors while this mode is active.
-    pub lighting: Option<Frame>,
-    /// Colors while Hypershift is held. `None` keeps the mode's own frame.
-    pub hypershift_lighting: Option<Frame>,
+    /// Per-key colors or a firmware effect while this mode is active.
+    pub lighting: Option<Light>,
+    /// Colors or effect while Hypershift is held. `None` keeps the mode's own.
+    pub hypershift_lighting: Option<Light>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -180,6 +180,20 @@ pub enum ProfileError {
         layer: &'static str,
         key: String,
         reason: String,
+    },
+    #[error("mode.{mode}{layer}: {reason}")]
+    Effect {
+        mode: usize,
+        layer: &'static str,
+        reason: String,
+    },
+    #[error(
+        "mode.{mode}: `{lighting}` and `{effect}` can't both be set; a layer has key colors or an effect"
+    )]
+    LightingAndEffect {
+        mode: usize,
+        lighting: &'static str,
+        effect: &'static str,
     },
     #[error("mode.{mode}{layer} must be a table")]
     LightingNotTable { mode: usize, layer: &'static str },
@@ -307,6 +321,8 @@ fn parse_mode(i: usize, table: toml::Table) -> Result<Mode, ProfileError> {
     let mut hypershift = None;
     let mut lighting = None;
     let mut hypershift_lighting = None;
+    let mut effect_base = None;
+    let mut effect_shift = None;
     let mut rest = toml::Table::new();
     for (k, v) in table {
         match k.as_str() {
@@ -336,11 +352,33 @@ fn parse_mode(i: usize, table: toml::Table) -> Result<Mode, ProfileError> {
                 let toml::Value::Table(t) = v else {
                     return Err(ProfileError::LightingNotTable { mode: i, layer });
                 };
-                let frame = parse_frame(i, layer, t)?;
+                let frame = Light::Frame(parse_frame(i, layer, t)?);
                 if k == "lighting" {
                     lighting = Some(frame);
                 } else {
                     hypershift_lighting = Some(frame);
+                }
+            }
+            "effect" | "hypershift_effect" => {
+                let layer = if k == "effect" {
+                    ".effect"
+                } else {
+                    ".hypershift_effect"
+                };
+                let toml::Value::Table(t) = v else {
+                    return Err(ProfileError::LightingNotTable { mode: i, layer });
+                };
+                let effect = Light::Effect(PadEffect::from_table(&t).map_err(|reason| {
+                    ProfileError::Effect {
+                        mode: i,
+                        layer,
+                        reason,
+                    }
+                })?);
+                if k == "effect" {
+                    effect_base = Some(effect);
+                } else {
+                    effect_shift = Some(effect);
                 }
             }
             _ => {
@@ -348,6 +386,22 @@ fn parse_mode(i: usize, table: toml::Table) -> Result<Mode, ProfileError> {
             }
         }
     }
+    if lighting.is_some() && effect_base.is_some() {
+        return Err(ProfileError::LightingAndEffect {
+            mode: i,
+            lighting: "lighting",
+            effect: "effect",
+        });
+    }
+    if hypershift_lighting.is_some() && effect_shift.is_some() {
+        return Err(ProfileError::LightingAndEffect {
+            mode: i,
+            lighting: "hypershift_lighting",
+            effect: "hypershift_effect",
+        });
+    }
+    let lighting = lighting.or(effect_base);
+    let hypershift_lighting = hypershift_lighting.or(effect_shift);
     Ok(Mode {
         led_mask: led_mask.unwrap_or(DEFAULT_LED_MASKS[i]),
         bindings: parse_layer(i, "", rest)?,
@@ -621,12 +675,14 @@ led_mask = 2
         )
         .unwrap();
         assert!(p.uses_lighting());
-        let l = p.modes[0].lighting.as_ref().unwrap();
+        let Some(Light::Frame(l)) = p.modes[0].lighting.as_ref() else {
+            panic!("a frame")
+        };
         assert_eq!(l.keys[&Key::from_name("KEY_W").unwrap()], Rgb(0, 255, 255));
-        assert_eq!(
-            p.modes[0].hypershift_lighting.as_ref().unwrap().default,
-            Rgb(0, 0, 0)
-        );
+        let Some(Light::Frame(h)) = p.modes[0].hypershift_lighting.as_ref() else {
+            panic!("a frame")
+        };
+        assert_eq!(h.default, Rgb(0, 0, 0));
         assert!(p.modes[1].lighting.is_none(), "unlit modes stay unset");
         // Lighting tables are not key bindings.
         assert_eq!(p.modes[0].bindings.len(), 1);
@@ -635,6 +691,45 @@ led_mask = 2
                 .unwrap()
                 .uses_lighting()
         );
+    }
+
+    #[test]
+    fn effects_parse_and_exclude_key_colors_on_the_same_layer() {
+        let p = Profile::from_toml(
+            "name='x'\n[mode.0]\n[mode.0.effect]\ntype='wave'\ndirection='right'\n\
+             [mode.0.hypershift_effect]\ntype='reactive'\ncolor='#ff0000'\nspeed=1\n\
+             [mode.1]\n[mode.1.lighting]\ndefault='#000000'\n[mode.1.hypershift_effect]\ntype='spectrum'\n",
+        )
+        .unwrap();
+        assert!(p.uses_lighting());
+        assert_eq!(
+            p.modes[0].lighting,
+            Some(Light::Effect(PadEffect::Wave(
+                crate::lighting::Travel::Right
+            )))
+        );
+        assert!(matches!(p.modes[1].lighting, Some(Light::Frame(_))));
+        assert_eq!(
+            p.modes[1].hypershift_lighting,
+            Some(Light::Effect(PadEffect::Spectrum)),
+            "key colors on the base layer and an effect on Hypershift can mix"
+        );
+        let both = err(
+            "name='x'\n[mode.0]\n[mode.0.lighting]\ndefault='#000000'\n[mode.0.effect]\ntype='spectrum'\n",
+        );
+        assert!(
+            matches!(both, ProfileError::LightingAndEffect { .. }),
+            "{both}"
+        );
+        let bad = err("name='x'\n[mode.0]\n[mode.0.effect]\ntype='disco'\n").to_string();
+        assert!(
+            bad.contains("mode.0.effect") && bad.contains("unknown effect type"),
+            "{bad}"
+        );
+        assert!(matches!(
+            err("name='x'\n[mode.0]\neffect='x'\n"),
+            ProfileError::LightingNotTable { .. }
+        ));
     }
 
     #[test]

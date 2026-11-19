@@ -6,7 +6,9 @@ use std::{io, path::Path, sync::Arc, time::Duration};
 
 use anyhow::Context;
 use evdev::InputEvent;
-use tartarusd_core::{ActiveWindow, Effect, Event, Machine, Payload, Profile, ProfileSet};
+use tartarusd_core::{
+    ActiveWindow, Effect, Event, Machine, Pad, PadEffect, Payload, Profile, ProfileSet,
+};
 use tokio::{
     sync::{mpsc, oneshot, watch},
     time::Instant,
@@ -54,6 +56,8 @@ pub enum Command {
     StopCapture(oneshot::Sender<()>),
     /// Show this rendered frame on the pad until cleared or timed out.
     PreviewFrame(Vec<u8>, oneshot::Sender<Result<(), String>>),
+    /// Show this firmware effect (as TOML, see `PadEffect::from_toml_str`) the same way.
+    PreviewEffect(String, oneshot::Sender<Result<(), String>>),
     ClearPreview(oneshot::Sender<()>),
 }
 
@@ -62,7 +66,7 @@ pub struct App<S: Sink> {
     set: ProfileSet,
     sink: S,
     led_tx: watch::Sender<u8>,
-    frame_tx: watch::Sender<Option<Arc<Payload>>>,
+    frame_tx: watch::Sender<Pad>,
     signals: mpsc::UnboundedSender<Signal>,
     /// The profile chosen at startup: the fallback when nothing is pinned or matched.
     default_name: String,
@@ -80,7 +84,7 @@ impl<S: Sink> App<S> {
         set: ProfileSet,
         sink: S,
         led_tx: watch::Sender<u8>,
-        frame_tx: watch::Sender<Option<Arc<Payload>>>,
+        frame_tx: watch::Sender<Pad>,
         signals: mpsc::UnboundedSender<Signal>,
     ) -> App<S> {
         let default_name = machine.profile().name.clone();
@@ -124,7 +128,7 @@ impl<S: Sink> App<S> {
                 Effect::SetLed(mask) => {
                     self.led_tx.send_replace(mask);
                 }
-                Effect::SetFrame(frame) => {
+                Effect::SetPad(frame) => {
                     // A preview owns the pad; the current frame returns when it ends.
                     if self.preview_until.is_none() {
                         self.frame_tx.send_replace(frame);
@@ -291,7 +295,7 @@ impl<S: Sink> App<S> {
                     Ok(frame) => {
                         self.preview_until =
                             Some(now + Duration::from_secs(tartarusd_ipc::PREVIEW_TIMEOUT_SECS));
-                        self.frame_tx.send_replace(Some(Arc::new(frame)));
+                        self.frame_tx.send_replace(Pad::Frame(Arc::new(frame)));
                         Ok(())
                     }
                     Err(_) => Err(format!(
@@ -300,6 +304,14 @@ impl<S: Sink> App<S> {
                         bytes.len()
                     )),
                 };
+                let _ = r.send(result);
+            }
+            Command::PreviewEffect(text, r) => {
+                let result = PadEffect::from_toml_str(&text).map(|e| {
+                    self.preview_until =
+                        Some(now + Duration::from_secs(tartarusd_ipc::PREVIEW_TIMEOUT_SECS));
+                    self.frame_tx.send_replace(Pad::Effect(e));
+                });
                 let _ = r.send(result);
             }
             Command::ClearPreview(r) => {
@@ -313,7 +325,7 @@ impl<S: Sink> App<S> {
     /// End a preview and show what the profile says again.
     pub fn stop_preview(&mut self) {
         if self.preview_until.take().is_some() {
-            self.frame_tx.send_replace(self.machine.current_frame());
+            self.frame_tx.send_replace(self.machine.current_pad());
         }
     }
 
@@ -372,7 +384,7 @@ mod tests {
         out: Rec,
         sigs: UnboundedReceiver<Signal>,
         led: watch::Receiver<u8>,
-        frame: watch::Receiver<Option<Arc<Payload>>>,
+        frame: watch::Receiver<Pad>,
     }
 
     fn profile_text(name: &str, key1: &str) -> String {
@@ -397,7 +409,7 @@ mod tests {
         );
         let machine = Machine::new(cfg, set.pick(Some(start)).unwrap());
         let (led_tx, led) = watch::channel(machine.led());
-        let (frame_tx, frame) = watch::channel(machine.current_frame());
+        let (frame_tx, frame) = watch::channel(machine.current_pad());
         let (sig_tx, sigs) = mpsc::unbounded_channel();
         let out = Rec::default();
         let app = App::new(machine, set, out.clone(), led_tx, frame_tx, sig_tx);
@@ -743,8 +755,8 @@ mod tests {
     }
 
     /// The color of the matrix cell for KEY_1 (row 0, col 0) in a published frame.
-    fn first_cell(f: &watch::Receiver<Option<Arc<Payload>>>) -> Option<[u8; 3]> {
-        f.borrow().as_ref().map(|p| [p[3], p[4], p[5]])
+    fn first_cell(f: &watch::Receiver<Pad>) -> Option<[u8; 3]> {
+        f.borrow().frame().map(|p| [p[3], p[4], p[5]])
     }
 
     #[test]
@@ -771,7 +783,7 @@ mod tests {
             cmd(&mut f.app, |r| Command::Activate("Plain".into(), r)),
             Ok(())
         );
-        assert!(f.frame.borrow().is_none());
+        assert_eq!(*f.frame.borrow(), Pad::Handback);
 
         // And back again re-publishes (mode resets to 0).
         assert_eq!(
@@ -804,6 +816,24 @@ mod tests {
     }
 
     #[test]
+    fn an_effect_preview_shows_the_effect_and_bad_text_is_refused() {
+        let mut f = fixture(&[("l.toml", lit("Lit", "KEY_1", "#ff0000"))], "Lit");
+        let wave = "type = 'wave'\ndirection = 'right'".to_owned();
+        assert_eq!(cmd(&mut f.app, |r| Command::PreviewEffect(wave, r)), Ok(()));
+        assert_eq!(
+            *f.frame.borrow(),
+            Pad::Effect(PadEffect::Wave(tartarusd_core::Travel::Right))
+        );
+        assert!(f.app.preview_deadline().is_some());
+        let bad = cmd(&mut f.app, |r| {
+            Command::PreviewEffect("type = 'disco'".into(), r)
+        });
+        assert!(bad.unwrap_err().contains("unknown effect type"));
+        cmd(&mut f.app, Command::ClearPreview);
+        assert_eq!(first_cell(&f.frame), Some([255, 0, 0]));
+    }
+
+    #[test]
     fn a_preview_of_the_wrong_size_is_refused_and_a_timeout_clears_it() {
         let mut f = fixture(&[("l.toml", lit("Lit", "KEY_1", "#ff0000"))], "Lit");
         assert!(cmd(&mut f.app, |r| Command::PreviewFrame(vec![1, 2, 3], r)).is_err());
@@ -821,9 +851,9 @@ mod tests {
         let mut f = fixture(&[("p.toml", profile_text("Plain", "KEY_A"))], "Plain");
         let frame = vec![0u8; tartarusd_core::lighting::FRAME_LEN];
         cmd(&mut f.app, |r| Command::PreviewFrame(frame, r)).unwrap();
-        assert!(f.frame.borrow().is_some());
+        assert_ne!(*f.frame.borrow(), Pad::Handback);
         cmd(&mut f.app, Command::ClearPreview);
-        assert!(f.frame.borrow().is_none());
+        assert_eq!(*f.frame.borrow(), Pad::Handback);
     }
 
     fn macro_fixture() -> Fixture {

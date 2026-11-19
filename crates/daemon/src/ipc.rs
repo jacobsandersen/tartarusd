@@ -65,6 +65,10 @@ impl Service {
         invalid(ask(&self.cmds, |r| Command::PreviewFrame(frame, r)).await?)
     }
 
+    async fn preview_effect(&self, effect: String) -> fdo::Result<()> {
+        invalid(ask(&self.cmds, |r| Command::PreviewEffect(effect, r)).await?)
+    }
+
     async fn clear_preview(&self) -> fdo::Result<()> {
         ask(&self.cmds, Command::ClearPreview).await
     }

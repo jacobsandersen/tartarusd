@@ -13,14 +13,14 @@ use std::{
 use gtk::glib;
 
 use super::{Ui, View};
-use crate::edit;
+use crate::edit::{self, Preview};
 
 #[derive(Default)]
 pub struct Pump {
     /// The frame the editor wants on the pad; `None` means the profile's own lighting.
-    want: RefCell<Option<Vec<u8>>>,
+    want: RefCell<Option<Preview>>,
     /// What the daemon was last told.
-    sent: RefCell<Option<Vec<u8>>>,
+    sent: RefCell<Option<Preview>>,
     busy: Cell<bool>,
 }
 
@@ -30,7 +30,7 @@ impl Ui {
         let want = {
             let st = self.st.borrow();
             match (&st.draft, st.view) {
-                (Some(d), View::Lighting) => edit::preview_payload(d, st.mode, st.layer),
+                (Some(d), View::Lighting) => edit::preview(d, st.mode, st.layer),
                 _ => None,
             }
         };
@@ -59,7 +59,8 @@ impl Ui {
                     break;
                 };
                 let res = match &want {
-                    Some(frame) => proxy.preview_frame(frame).await,
+                    Some(Preview::Frame(frame)) => proxy.preview_frame(frame).await,
+                    Some(Preview::Effect(text)) => proxy.preview_effect(text).await,
                     None => proxy.clear_preview().await,
                 };
                 if res.is_err() {
