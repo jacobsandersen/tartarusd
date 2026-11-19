@@ -50,5 +50,7 @@ Decisions (2026-11-19):
 - Profile TOML files are the single source of truth; the GUI writes files atomically,
   the daemon reloads them.
 - Daemon runs as a `systemd --user` service with udev `uaccess`; never require root.
+- Check both feature configs: `cargo clippy --all-targets -- -D warnings` and
+  `cargo clippy --all-targets --features tartarusd/hyprland -- -D warnings`.
 - Best practices throughout: `cargo clippy -- -D warnings`, `cargo fmt`, unit tests
   for each milestone, `tracing` for logs, typed errors (`thiserror`) in libraries.

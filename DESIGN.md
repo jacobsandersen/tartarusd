@@ -136,15 +136,28 @@ Global config (`~/.config/tartarusd/config.toml`): device match, `mode_key`,
 - **Active profile precedence:** manual pin > auto-match > default.
 - **Auto-switch (opt-in, compositor-specific):** the daemon core is desktop-independent
   and works on any DE/WM. Automatic switching needs to know the active window, which
-  is compositor-specific, so it sits behind a small `WindowSource` abstraction that
-  yields `ActiveWindow { class, title }` events. Each backend is an opt-in cargo
+  is compositor-specific, so it sits behind a small `window` module: a backend is a
+  task that sends `ActiveWindow { class, title }` on every focus change (and once at
+  startup). Each backend is an opt-in cargo
   feature, **off by default**; with none enabled, profile selection is manual pin >
   default and `[[match]]` rules are parsed and kept but unused (profiles stay portable).
-  - Feature `hyprland`: subscribe to Hyprland `socket2`
-    (`$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock`),
-    `activewindow>>class,title` events.
+  - Feature `hyprland` (`cargo build --features hyprland`): connects to Hyprland's event
+    socket (`$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock`) for
+    `activewindow>>class,title` events and asks the request socket (`.socket.sock`,
+    `j/activewindow`) for the window already focused at startup. If the environment
+    variable is missing it uses the newest instance under `$XDG_RUNTIME_DIR/hypr`. It
+    reconnects if the compositor restarts.
   - Other backends (X11, KDE, GNOME, sway, ...) can be added the same way later;
     none are planned yet.
+- **Matching:** a `[[match]]` rule needs `class` and/or `title_regex`; every field set
+  must match (`class` is compared exactly and case-sensitively; `title_regex` is
+  searched anywhere in the title). A profile matches if any of its rules does. Empty
+  rules and invalid regexes are rejected at load. If several profiles match, the first
+  by file name wins. A profile with no rules never auto-matches.
+- **Selection** is re-evaluated on focus change, profile reload, pin and unpin:
+  pinned profile > first matching profile > startup default. Switching releases held
+  keys. If the selected profile disappears, selection falls back down that chain, and
+  if nothing remains the loaded profile keeps running.
 - **Mode on profile switch:** restore last mode if `remember_mode`, else reset to 0.
 - **Capture mode:** while capturing, stop emitting output and send each physical
   key-down as a `KeyCaptured` signal (the GUI can't read the grabbed device itself).
@@ -309,7 +322,7 @@ Key crates: `evdev` (read + uinput `VirtualDevice`), `zbus`, `serde` + `toml`,
    hard-coded profile path.
 3. **profiles + reload** — profiles dir, inotify reload, atomic swap.
 4. **D-Bus + CLI.**
-5. **Window-source abstraction + opt-in `hyprland` feature** (auto-switch).
+5. **Window sources + opt-in `hyprland` feature** (auto-switch). Done.
 6. **Macros + hypershift layer.**
 6b. **Per-key lighting** — frames per mode and per Hypershift layer.
 7. **GUI** (incl. per-key color editing on the same layout widget).
