@@ -6,7 +6,7 @@ use std::{io, path::Path, time::Duration};
 
 use anyhow::Context;
 use evdev::InputEvent;
-use tartarusd_core::{Effect, Event, Machine, ProfileSet};
+use tartarusd_core::{ActiveWindow, Effect, Event, Machine, Profile, ProfileSet};
 use tokio::{
     sync::{mpsc, oneshot, watch},
     time::Instant,
@@ -60,9 +60,11 @@ pub struct App<S: Sink> {
     sink: S,
     led_tx: watch::Sender<u8>,
     signals: mpsc::UnboundedSender<Signal>,
-    /// The profile chosen at startup; `Unpin` returns here.
+    /// The profile chosen at startup: the fallback when nothing is pinned or matched.
     default_name: String,
     pinned: Option<String>,
+    /// Last window reported by a window source (none until one reports).
+    window: Option<ActiveWindow>,
     capture_until: Option<Instant>,
 }
 
@@ -83,6 +85,7 @@ impl<S: Sink> App<S> {
             signals,
             default_name,
             pinned: None,
+            window: None,
             capture_until: None,
         }
     }
@@ -135,7 +138,7 @@ impl<S: Sink> App<S> {
         Ok(())
     }
 
-    fn swap(&mut self, profile: std::sync::Arc<tartarusd_core::Profile>) -> anyhow::Result<()> {
+    fn swap(&mut self, profile: std::sync::Arc<Profile>) -> anyhow::Result<()> {
         info!(profile = %profile.name, "switching profile");
         self.signal(Signal::ProfileChanged(profile.name.clone()));
         let fx = self.machine.swap_profile(profile);
@@ -155,16 +158,47 @@ impl<S: Sink> App<S> {
         for e in self.set.update(&files) {
             warn!(file = %e.label, "profile not reloaded: {}", e.error);
         }
-        let current = self.machine.profile().clone();
-        match self.set.updated(&current) {
-            Some(new) => self.swap(new),
+        if let Some(name) = &self.pinned
+            && self.set.get(name).is_none()
+        {
+            warn!(profile = %name, "pinned profile is no longer present; falling back");
+        }
+        self.reevaluate()
+    }
+
+    /// Which profile should be active: manual pin > window match > startup default.
+    /// `None` only if even the default is gone; the caller then keeps the current one.
+    fn select(&self) -> Option<std::sync::Arc<Profile>> {
+        if let Some(p) = self.pinned.as_ref().and_then(|n| self.set.get(n)) {
+            return Some(p.clone());
+        }
+        if let Some(p) = self.window.as_ref().and_then(|w| self.set.auto_match(w)) {
+            return Some(p.clone());
+        }
+        self.set.get(&self.default_name).cloned()
+    }
+
+    /// Swap to the selected profile if it differs from the running one. Content is
+    /// compared, so unrelated changes never release held keys.
+    fn reevaluate(&mut self) -> anyhow::Result<()> {
+        match self.select() {
+            Some(target) if *target != **self.machine.profile() => self.swap(target),
+            Some(_) => Ok(()),
             None => {
-                if self.set.get(&current.name).is_none() {
-                    warn!(profile = %current.name, "active profile is no longer present; keeping the loaded version");
-                }
+                warn!("no profile available to select; keeping the loaded one");
                 Ok(())
             }
         }
+    }
+
+    /// The focused window changed (from a window-source backend).
+    pub fn window_changed(&mut self, w: ActiveWindow) -> anyhow::Result<()> {
+        if self.window.as_ref() == Some(&w) {
+            return Ok(());
+        }
+        tracing::debug!(class = %w.class, title = %w.title, "active window");
+        self.window = Some(w);
+        self.reevaluate()
     }
 
     pub fn command(&mut self, cmd: Command, now: Instant) -> anyhow::Result<()> {
@@ -181,13 +215,11 @@ impl<S: Sink> App<S> {
                 });
             }
             Command::Activate(name, r) => {
-                let result = match self.set.get(&name).cloned() {
+                let result = match self.set.get(&name) {
                     None => Err(format!("no such profile: {name}")),
-                    Some(p) => {
+                    Some(_) => {
                         self.pinned = Some(name);
-                        if *p != **self.machine.profile() {
-                            self.swap(p)?;
-                        }
+                        self.reevaluate()?;
                         Ok(())
                     }
                 };
@@ -195,11 +227,7 @@ impl<S: Sink> App<S> {
             }
             Command::Unpin(r) => {
                 self.pinned = None;
-                if let Some(p) = self.set.get(&self.default_name).cloned()
-                    && *p != **self.machine.profile()
-                {
-                    self.swap(p)?;
-                }
+                self.reevaluate()?;
                 let _ = r.send(());
             }
             Command::SetMode(n, r) => {
@@ -479,6 +507,113 @@ mod tests {
         assert!(!f.app.is_capturing());
         f.app.input(Duration::ZERO, &raw("KEY_1", 1)).unwrap();
         assert_eq!(f.out.take_keys(), [down("KEY_A")], "remapping resumes");
+    }
+
+    fn matching(name: &str, class: &str) -> String {
+        format!("name = '{name}'\n[[match]]\nclass = '{class}'\n[mode.0]\n[mode.1]\n")
+    }
+
+    fn win(class: &str) -> ActiveWindow {
+        ActiveWindow {
+            class: class.into(),
+            title: String::new(),
+        }
+    }
+
+    fn game() -> Fixture {
+        fixture(
+            &[
+                ("a.toml", profile_text("Default", "KEY_A")),
+                ("g.toml", matching("Game", "game")),
+            ],
+            "Default",
+        )
+    }
+
+    fn active(f: &mut Fixture) -> String {
+        cmd(&mut f.app, Command::GetState).profile
+    }
+
+    #[test]
+    fn window_match_switches_and_leaving_returns_to_default() {
+        let mut f = game();
+        f.app.window_changed(win("game")).unwrap();
+        assert_eq!(active(&mut f), "Game");
+        assert!(drain(&mut f.sigs).contains(&Signal::ProfileChanged("Game".into())));
+        f.app.window_changed(win("browser")).unwrap();
+        assert_eq!(active(&mut f), "Default");
+        f.app.window_changed(ActiveWindow::default()).unwrap();
+        assert_eq!(active(&mut f), "Default", "no focused window -> default");
+    }
+
+    #[test]
+    fn repeated_identical_window_event_does_nothing() {
+        let mut f = game();
+        f.app.window_changed(win("game")).unwrap();
+        drain(&mut f.sigs);
+        f.app.window_changed(win("game")).unwrap();
+        assert!(drain(&mut f.sigs).is_empty());
+    }
+
+    #[test]
+    fn pin_beats_window_match_and_unpin_reverts_to_the_match() {
+        let mut f = game();
+        f.app.window_changed(win("game")).unwrap();
+        assert_eq!(
+            cmd(&mut f.app, |r| Command::Activate("Default".into(), r)),
+            Ok(())
+        );
+        assert_eq!(active(&mut f), "Default");
+        f.app.window_changed(win("other")).unwrap();
+        f.app.window_changed(win("game")).unwrap();
+        assert_eq!(
+            active(&mut f),
+            "Default",
+            "pinned: focus changes are ignored"
+        );
+        cmd(&mut f.app, Command::Unpin);
+        assert_eq!(
+            active(&mut f),
+            "Game",
+            "unpin re-evaluates the focused window"
+        );
+    }
+
+    #[test]
+    fn editing_match_rules_re_evaluates_the_focused_window() {
+        let mut f = game();
+        f.app.window_changed(win("newgame")).unwrap();
+        assert_eq!(active(&mut f), "Default");
+        std::fs::write(f.dir.path().join("g.toml"), matching("Game", "newgame")).unwrap();
+        f.app.reload(f.dir.path()).unwrap();
+        assert_eq!(active(&mut f), "Game");
+    }
+
+    #[test]
+    fn deleting_the_active_profile_falls_back_to_default() {
+        let mut f = game();
+        f.app.window_changed(win("game")).unwrap();
+        std::fs::remove_file(f.dir.path().join("g.toml")).unwrap();
+        f.app.reload(f.dir.path()).unwrap();
+        assert_eq!(active(&mut f), "Default");
+    }
+
+    #[test]
+    fn mode_is_remembered_across_window_switches_when_opted_in() {
+        let remember =
+            "name = 'Game'\nremember_mode = true\n[[match]]\nclass = 'game'\n[mode.0]\n[mode.1]\n";
+        let mut f = fixture(
+            &[
+                ("a.toml", profile_text("Default", "KEY_A")),
+                ("g.toml", remember.into()),
+            ],
+            "Default",
+        );
+        f.app.window_changed(win("game")).unwrap();
+        cmd(&mut f.app, |r| Command::SetMode(1, r)).unwrap();
+        f.app.window_changed(win("browser")).unwrap();
+        f.app.window_changed(win("game")).unwrap();
+        assert_eq!(cmd(&mut f.app, Command::GetState).mode, 1);
     }
 
     #[test]

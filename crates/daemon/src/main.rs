@@ -7,6 +7,7 @@ mod ipc;
 mod led;
 mod profiles;
 mod translate;
+mod window;
 
 use std::{
     path::{Path, PathBuf},
@@ -16,7 +17,7 @@ use std::{
 use anyhow::{Context, bail};
 use clap::Parser;
 use evdev::InputEvent;
-use tartarusd_core::{Config, Machine, ProfileSet, profile::LED_BLUE};
+use tartarusd_core::{ActiveWindow, Config, Machine, ProfileSet, profile::LED_BLUE};
 use tokio::{
     signal::unix::{SignalKind, signal},
     sync::{mpsc, watch},
@@ -141,6 +142,18 @@ async fn main() -> anyhow::Result<()> {
     let led_tx_shutdown = led_tx.clone();
     let mut app = app::App::new(machine, set, outputs, led_tx, sig_tx);
 
+    let (win_tx, mut win_rx) = mpsc::channel::<ActiveWindow>(16);
+    let window_task = match window::start(win_tx) {
+        Some((backend, task)) => {
+            info!(
+                backend,
+                "window source active: profiles auto-switch by focused window"
+            );
+            Some(task)
+        }
+        None => None,
+    };
+
     let (tx, mut rx) = mpsc::channel::<Msg>(256);
     let mut readers = JoinSet::new();
     for (name, dev) in devices {
@@ -199,6 +212,11 @@ async fn main() -> anyhow::Result<()> {
                 warn!("capture timed out; resuming remapping");
                 app.stop_capture();
             }
+            Some(w) = win_rx.recv() => {
+                if let Err(err) = app.window_changed(w) {
+                    break 'run Err(err);
+                }
+            }
             Some(()) = changes.recv() => {
                 // Debounce without blocking input: just move the deadline.
                 reload_at = Some(Instant::now() + profiles::DEBOUNCE);
@@ -219,6 +237,9 @@ async fn main() -> anyhow::Result<()> {
     app.shutdown();
     drop(app); // closes the signal channel
     let _ = tokio::time::timeout(Duration::from_secs(1), signal_task).await;
+    if let Some(t) = window_task {
+        t.abort();
+    }
     // Dropping the readers closes the device fds, which releases the grabs.
     readers.abort_all();
     while readers.join_next().await.is_some() {}

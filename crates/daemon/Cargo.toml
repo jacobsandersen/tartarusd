@@ -12,13 +12,19 @@ anyhow = "1.0.104"
 clap = { version = "4.6.8", features = ["derive"] }
 evdev = { version = "0.13.2", features = ["tokio"] }
 notify = "8.2.2"
+serde_json = { version = "1.0.154", optional = true }
 tartarusd-core = { version = "0.1.0", path = "../core" }
 tartarusd-ipc = { version = "0.1.0", path = "../ipc" }
 thiserror.workspace = true
-tokio = { version = "1.54.1", features = ["rt", "macros", "signal", "sync", "time"] }
+tokio = { version = "1.54.1", features = ["rt", "macros", "signal", "sync", "time", "net", "io-util"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 zbus = "6.3.0"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+[features]
+# Compositor-specific window sources are opt-in; the default build is desktop-independent.
+# hyprland: switch profiles by active window under Hyprland.
+hyprland = ["dep:serde_json"]

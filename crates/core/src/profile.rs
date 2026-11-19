@@ -10,6 +10,7 @@ use serde::Deserialize;
 use crate::{
     action::{Action, ActionError},
     keys::PhysicalKey,
+    window::ActiveWindow,
 };
 
 pub const LED_BLUE: u8 = 1;
@@ -33,12 +34,51 @@ pub const MAX_MODES_EXTENDED: usize = DEFAULT_LED_MASKS.len();
 
 pub type Layer = HashMap<PhysicalKey, Action>;
 
+/// A compiled window-title pattern. Compared by source text.
+#[derive(Clone, Debug)]
+pub struct TitleRegex(regex::Regex);
+
+impl TitleRegex {
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl PartialEq for TitleRegex {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for TitleRegex {}
+
+impl<'de> Deserialize<'de> for TitleRegex {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let src = String::deserialize(d)?;
+        regex::Regex::new(&src)
+            .map(TitleRegex)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+/// Selects a profile by active window. Every field that is set must match.
 #[derive(Clone, PartialEq, Eq, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MatchRule {
-    /// Hyprland window class.
+    /// Window class / app id, compared exactly (case-sensitive).
     pub class: Option<String>,
-    pub title_regex: Option<String>,
+    /// Regex searched anywhere in the window title.
+    pub title_regex: Option<TitleRegex>,
+}
+
+impl MatchRule {
+    pub fn matches(&self, w: &ActiveWindow) -> bool {
+        self.class.as_ref().is_none_or(|c| *c == w.class)
+            && self
+                .title_regex
+                .as_ref()
+                .is_none_or(|r| r.0.is_match(&w.title))
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -108,6 +148,10 @@ pub enum ProfileError {
         target: u8,
         modes: usize,
     },
+    #[error(
+        "[[match]] #{index} needs `class` or `title_regex`; an empty rule would match every window"
+    )]
+    EmptyMatchRule { index: usize },
     #[error("mode.{mode}.hypershift must be a table")]
     HypershiftNotTable { mode: usize },
 }
@@ -134,6 +178,14 @@ impl Profile {
         }
 
         // Numeric order, not the lexicographic order of the string keys.
+        if let Some(index) = raw
+            .match_rules
+            .iter()
+            .position(|r| r.class.is_none() && r.title_regex.is_none())
+        {
+            return Err(ProfileError::EmptyMatchRule { index });
+        }
+
         let mut indexed = BTreeMap::new();
         for (k, v) in raw.mode {
             let i: usize = k
@@ -184,6 +236,12 @@ impl Profile {
         };
         profile.check_set_mode_targets()?;
         Ok(profile)
+    }
+
+    /// Whether any `[[match]]` rule selects this window. A profile with no rules never
+    /// auto-matches (it can still be the default or pinned).
+    pub fn matches(&self, w: &ActiveWindow) -> bool {
+        self.match_rules.iter().any(|r| r.matches(w))
     }
 
     fn check_set_mode_targets(&self) -> Result<(), ProfileError> {
@@ -331,6 +389,53 @@ led_mask = 2
         let p = Profile::from_toml(include_str!("../../../docs/examples/smoke-test.toml")).unwrap();
         assert_eq!(p.modes.len(), 3);
         assert!(p.modes[0].hypershift.is_some());
+    }
+
+    fn win(class: &str, title: &str) -> ActiveWindow {
+        ActiveWindow {
+            class: class.into(),
+            title: title.into(),
+        }
+    }
+
+    #[test]
+    fn match_rules() {
+        let p = Profile::from_toml(
+            "name='x'\n[[match]]\nclass='steam_app_1'\n[[match]]\nclass='kitty'\ntitle_regex='^vim '\n[mode.0]\n",
+        )
+        .unwrap();
+        assert!(p.matches(&win("steam_app_1", "anything")), "class alone");
+        assert!(p.matches(&win("kitty", "vim notes.md")), "class and title");
+        assert!(!p.matches(&win("kitty", "zsh")), "title must match too");
+        assert!(
+            !p.matches(&win("Steam_App_1", "")),
+            "class is case-sensitive"
+        );
+        let none = Profile::from_toml("name='x'\n[mode.0]\n").unwrap();
+        assert!(
+            !none.matches(&win("kitty", "")),
+            "no rules never auto-match"
+        );
+    }
+
+    #[test]
+    fn title_regex_is_searched_not_anchored() {
+        let p = Profile::from_toml("name='x'\n[[match]]\ntitle_regex='Elden'\n[mode.0]\n").unwrap();
+        assert!(p.matches(&win("", "ELDEN RING - Elden Ring")));
+    }
+
+    #[test]
+    fn bad_match_rules_rejected_at_load() {
+        assert!(matches!(
+            err("name='x'\n[[match]]\n[mode.0]\n"),
+            ProfileError::EmptyMatchRule { index: 0 }
+        ));
+        assert!(matches!(
+            err("name='x'\n[[match]]\nclass='a'\n[[match]]\n[mode.0]\n"),
+            ProfileError::EmptyMatchRule { index: 1 }
+        ));
+        let e = err("name='x'\n[[match]]\ntitle_regex='('\n[mode.0]\n");
+        assert!(matches!(e, ProfileError::Toml(_)), "{e}");
     }
 
     fn err(src: &str) -> ProfileError {

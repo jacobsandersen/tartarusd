@@ -9,7 +9,10 @@ use std::{
     sync::Arc,
 };
 
-use crate::profile::{Profile, ProfileError};
+use crate::{
+    profile::{Profile, ProfileError},
+    window::ActiveWindow,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SetError {
@@ -116,12 +119,9 @@ impl ProfileSet {
         self.entries.is_empty()
     }
 
-    /// The new version of `current` (looked up by name) if it differs, else `None`.
-    /// `None` also covers "no longer present": the caller keeps running `current`.
-    pub fn updated(&self, current: &Profile) -> Option<Arc<Profile>> {
-        self.get(&current.name)
-            .filter(|p| ***p != *current)
-            .cloned()
+    /// The first profile (in file-name order) whose `[[match]]` rules select `w`.
+    pub fn auto_match(&self, w: &ActiveWindow) -> Option<&Arc<Profile>> {
+        self.entries.values().find(|p| p.matches(w))
     }
 
     /// Choose the startup profile: `preferred` by name, else the only one.
@@ -205,19 +205,25 @@ mod tests {
     }
 
     #[test]
-    fn updated_only_when_content_differs() {
+    fn auto_match_picks_first_by_file_name() {
+        let w = ActiveWindow {
+            class: "game".into(),
+            title: String::new(),
+        };
+        let m = |label: &str, name: &str, class: &str| {
+            (
+                label.to_string(),
+                format!("name='{name}'\n[[match]]\nclass='{class}'\n[mode.0]\n"),
+            )
+        };
         let mut s = ProfileSet::new();
-        s.update(&[f("a.toml", "A", "KEY_1 = 'KEY_A'\n")]);
-        let cur = s.get("A").unwrap().clone();
-        s.update(&[f("a.toml", "A", "KEY_1 = 'KEY_A'\n")]);
-        assert!(s.updated(&cur).is_none());
-        s.update(&[f("a.toml", "A", "KEY_1 = 'KEY_B'\n")]);
-        assert_eq!(s.updated(&cur).unwrap().modes[0].bindings.len(), 1);
-        s.update(&[]);
-        assert!(
-            s.updated(&cur).is_none(),
-            "removed: keep running the current one"
-        );
+        s.update(&[
+            m("b.toml", "B", "game"),
+            m("a.toml", "A", "game"),
+            m("c.toml", "C", "other"),
+        ]);
+        assert_eq!(s.auto_match(&w).unwrap().name, "A");
+        assert!(s.auto_match(&ActiveWindow::default()).is_none());
     }
 
     #[test]
