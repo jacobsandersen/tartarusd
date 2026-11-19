@@ -76,6 +76,7 @@ pub struct Widgets {
     pub list: gtk::ListBox,
     pub page: adw::NavigationPage,
     pub save: gtk::Button,
+    pub menu: gio::Menu,
     pub status: gtk::Label,
     pub name: adw::EntryRow,
     pub remember: adw::SwitchRow,
@@ -160,6 +161,34 @@ impl Ui {
             .page
             .set_title(&format!("{}{title}", if st.dirty { "• " } else { "" }));
         self.w.save.set_sensitive(st.dirty);
+        drop(st);
+        self.update_menu();
+    }
+
+    /// The window menu. Pinning forces the daemon onto one profile, so "Pin" is offered
+    /// when the daemon is running and the open profile is not the pinned one, and "Unpin"
+    /// while anything is pinned.
+    pub fn update_menu(&self) {
+        let st = self.st.borrow();
+        let m = &self.w.menu;
+        m.remove_all();
+        if let Some(s) = st.status.as_ref() {
+            let open = st.draft.as_ref().map(|d| d.name.as_str());
+            let pin = gio::Menu::new();
+            if open.is_some() && !(s.pinned && open == Some(s.profile.as_str())) {
+                pin.append(Some("Pin profile"), Some("win.pin"));
+            }
+            if s.pinned {
+                pin.append(Some(&format!("Unpin “{}”", s.profile)), Some("win.unpin"));
+            }
+            if pin.n_items() > 0 {
+                m.append_section(None, &pin);
+            }
+        }
+        let rest = gio::Menu::new();
+        rest.append(Some("Delete profile…"), Some("win.delete"));
+        rest.append(Some("Settings…"), Some("win.settings"));
+        m.append_section(None, &rest);
     }
 
     /// Re-read the directory, keeping the open profile.
@@ -396,6 +425,7 @@ impl Ui {
             .status
             .set_opacity(if s.is_some() { 1.0 } else { 0.6 });
         self.st.borrow_mut().status = s;
+        self.update_menu();
         self.refresh_list();
     }
 }
@@ -432,6 +462,7 @@ pub fn build(app: &adw::Application, dir: PathBuf) -> Rc<Ui> {
         list: gtk::ListBox::new(),
         page: adw::NavigationPage::builder().title("tartarusd").build(),
         save: gtk::Button::with_label("Save"),
+        menu: gio::Menu::new(),
         status: gtk::Label::new(Some("○ Daemon not running")),
         name: adw::EntryRow::builder().title("Name").build(),
         remember: adw::SwitchRow::builder()
@@ -552,17 +583,11 @@ fn content_page(ui: &Rc<Ui>) -> adw::NavigationPage {
     ui.w.status.add_css_class("caption");
     header.set_title_widget(Some(&ui.w.status));
 
-    let menu = gio::Menu::new();
-    menu.append(Some("Pin in daemon"), Some("win.pin"));
-    menu.append(Some("Unpin"), Some("win.unpin"));
-    menu.append(Some("Delete profile…"), Some("win.delete"));
-    let general = gio::Menu::new();
-    general.append(Some("Settings…"), Some("win.settings"));
-    menu.append_section(None, &general);
     let mb = gtk::MenuButton::builder()
         .icon_name("open-menu-symbolic")
-        .menu_model(&menu)
+        .menu_model(&ui.w.menu)
         .build();
+    ui.update_menu();
     header.pack_end(&mb);
 
     let col = gtk::Box::new(gtk::Orientation::Vertical, 24);
