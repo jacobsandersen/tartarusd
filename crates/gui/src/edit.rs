@@ -125,6 +125,24 @@ pub fn set_color(p: &mut Profile, mode: usize, layer: Layer, key: Key, c: Option
     }
 }
 
+/// Set (or clear, with `None`) the color of several keys at once.
+pub fn set_colors(p: &mut Profile, mode: usize, layer: Layer, keys: &[Key], c: Option<Rgb>) {
+    for k in keys {
+        set_color(p, mode, layer, *k, c);
+    }
+}
+
+/// The color a key shows in this layer's frame, or `None` if the layer has no frame.
+pub fn color_of(p: &Profile, mode: usize, layer: Layer, key: Key) -> Option<Rgb> {
+    let f = frame(p, mode, layer)?;
+    Some(f.keys.get(&key).copied().unwrap_or(f.default))
+}
+
+/// The rendered frame to preview on the pad for this layer, if it has one.
+pub fn preview_payload(p: &Profile, mode: usize, layer: Layer) -> Option<Vec<u8>> {
+    frame(p, mode, layer).map(|f| f.render().to_vec())
+}
+
 pub fn max_modes(p: &Profile) -> usize {
     if p.extended_modes {
         MAX_MODES_EXTENDED
@@ -308,6 +326,28 @@ mod tests {
         set_led_mask(&mut p, 1, 7).unwrap();
         set_led_mask(&mut p, 0, 1).unwrap(); // its own value is fine
         validate(&p).unwrap();
+    }
+
+    #[test]
+    fn colors_apply_to_many_keys_and_preview_renders_the_frame() {
+        let mut p = blank("x");
+        let keys: Vec<Key> = ["KEY_1", "KEY_2", "KEY_W"]
+            .iter()
+            .map(|n| Key::from_name(n).unwrap())
+            .collect();
+        assert_eq!(preview_payload(&p, 0, Layer::Base), None);
+        assert_eq!(color_of(&p, 0, Layer::Base, keys[0]), None);
+        set_frame_enabled(&mut p, 0, Layer::Base, true);
+        set_default_color(&mut p, 0, Layer::Base, Rgb(1, 1, 1));
+        set_colors(&mut p, 0, Layer::Base, &keys, Some(Rgb(9, 8, 7)));
+        validate(&p).unwrap();
+        assert_eq!(color_of(&p, 0, Layer::Base, keys[2]), Some(Rgb(9, 8, 7)));
+        let frame = preview_payload(&p, 0, Layer::Base).unwrap();
+        assert_eq!(frame.len(), tartarusd_core::lighting::FRAME_LEN);
+        assert_eq!(&frame[3..6], [9, 8, 7], "KEY_1 is row 0, col 0");
+        set_colors(&mut p, 0, Layer::Base, &keys[..2], None);
+        assert_eq!(color_of(&p, 0, Layer::Base, keys[0]), Some(Rgb(1, 1, 1)));
+        assert_eq!(color_of(&p, 0, Layer::Base, keys[2]), Some(Rgb(9, 8, 7)));
     }
 
     #[test]

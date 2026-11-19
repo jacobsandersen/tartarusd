@@ -13,8 +13,47 @@ const BASE_CSS: &str = "
 .keycap.selected { outline: 3px solid @accent_bg_color; outline-offset: -3px; }
 .keycap.no-led { opacity: 0.4; }
 .keycap.lit .pad-label { opacity: 0.75; }
+.swatch { min-width: 26px; min-height: 26px; padding: 0; border-radius: 6px; }
+.rubber { background: alpha(@accent_bg_color, 0.25); border: 1px solid @accent_bg_color; }
 .mode-key { min-width: 54px; min-height: 54px; opacity: 0.45; }
 ";
+
+/// Quick colors offered by the picker.
+pub const PALETTE: [Rgb; 12] = [
+    Rgb(255, 0, 0),
+    Rgb(255, 128, 0),
+    Rgb(255, 255, 0),
+    Rgb(0, 255, 0),
+    Rgb(0, 255, 255),
+    Rgb(0, 0, 255),
+    Rgb(128, 0, 255),
+    Rgb(255, 0, 255),
+    Rgb(255, 80, 144),
+    Rgb(255, 255, 255),
+    Rgb(255, 208, 160),
+    Rgb(0, 0, 0),
+];
+
+pub fn key(c: Rgb) -> u32 {
+    u32::from(c.0) << 16 | u32::from(c.1) << 8 | u32::from(c.2)
+}
+
+/// The CSS class that paints a button in `c`.
+pub fn class_name(c: Rgb) -> String {
+    format!("c-{:06x}", key(c))
+}
+
+fn rules(known: &BTreeSet<u32>) -> String {
+    let mut css = String::from(BASE_CSS);
+    for n in known {
+        let c = Rgb((*n >> 16) as u8, (*n >> 8) as u8, *n as u8);
+        css.push_str(&format!(
+            "button.c-{n:06x} {{ background: #{n:06x}; color: {}; }}\n",
+            readable_on(c)
+        ));
+    }
+    css
+}
 
 pub struct Colors {
     provider: gtk::CssProvider,
@@ -23,8 +62,9 @@ pub struct Colors {
 
 impl Colors {
     pub fn install() -> Colors {
+        let known: BTreeSet<u32> = PALETTE.iter().map(|c| key(*c)).collect();
         let provider = gtk::CssProvider::new();
-        provider.load_from_string(BASE_CSS);
+        provider.load_from_string(&rules(&known));
         if let Some(display) = gdk::Display::default() {
             gtk::style_context_add_provider_for_display(
                 &display,
@@ -34,24 +74,29 @@ impl Colors {
         }
         Colors {
             provider,
-            known: RefCell::default(),
+            known: RefCell::new(known),
         }
     }
 
-    /// The CSS class that paints a cap in `c`; registers the color on first use.
+    /// The CSS class that paints a key cap in `c`; registers the color on first use.
     pub fn class(&self, c: Rgb) -> String {
-        let n = u32::from(c.0) << 16 | u32::from(c.1) << 8 | u32::from(c.2);
-        if self.known.borrow_mut().insert(n) {
-            let mut css = String::from(BASE_CSS);
-            for n in self.known.borrow().iter() {
-                css.push_str(&format!(
-                    ".keycap.c-{n:06x} {{ background: #{n:06x}; color: {}; }}\n",
-                    readable_on(Rgb((*n >> 16) as u8, (*n >> 8) as u8, *n as u8))
-                ));
-            }
-            self.provider.load_from_string(&css);
+        if self.known.borrow_mut().insert(key(c)) {
+            self.provider.load_from_string(&rules(&self.known.borrow()));
         }
-        format!("c-{n:06x}")
+        class_name(c)
+    }
+
+    /// Forget colors no cap shows any more, so dragging a slider doesn't grow the style sheet.
+    pub fn prune(&self, used: &BTreeSet<u32>) {
+        let keep: BTreeSet<u32> = PALETTE
+            .iter()
+            .map(|c| key(*c))
+            .chain(used.iter().copied())
+            .collect();
+        if *self.known.borrow() != keep {
+            self.provider.load_from_string(&rules(&keep));
+            *self.known.borrow_mut() = keep;
+        }
     }
 }
 
@@ -61,18 +106,42 @@ pub fn readable_on(c: Rgb) -> &'static str {
     if lum > 140.0 { "#000000" } else { "#ffffff" }
 }
 
-pub fn to_rgba(c: Rgb) -> gdk::RGBA {
-    gdk::RGBA::new(
+/// `(hue 0..360, saturation 0..1, value 0..1)`.
+pub fn rgb_to_hsv(c: Rgb) -> (f32, f32, f32) {
+    let (r, g, b) = (
         f32::from(c.0) / 255.0,
         f32::from(c.1) / 255.0,
         f32::from(c.2) / 255.0,
-        1.0,
-    )
+    );
+    let max = r.max(g).max(b);
+    let d = max - r.min(g).min(b);
+    let h = if d == 0.0 {
+        0.0
+    } else if max == r {
+        60.0 * (((g - b) / d) % 6.0)
+    } else if max == g {
+        60.0 * ((b - r) / d + 2.0)
+    } else {
+        60.0 * ((r - g) / d + 4.0)
+    };
+    let h = if h < 0.0 { h + 360.0 } else { h };
+    (h, if max == 0.0 { 0.0 } else { d / max }, max)
 }
 
-pub fn from_rgba(c: &gdk::RGBA) -> Rgb {
-    let b = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
-    Rgb(b(c.red()), b(c.green()), b(c.blue()))
+pub fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Rgb {
+    let c = v * s;
+    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+    let (r, g, b) = match (h.rem_euclid(360.0) / 60.0) as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = v - c;
+    let byte = |f: f32| ((f + m).clamp(0.0, 1.0) * 255.0).round() as u8;
+    Rgb(byte(r), byte(g), byte(b))
 }
 
 #[cfg(test)]
@@ -88,11 +157,24 @@ mod tests {
     }
 
     #[test]
-    fn rgba_round_trips_every_byte() {
-        for v in 0..=255u8 {
-            assert_eq!(
-                from_rgba(&to_rgba(Rgb(v, 255 - v, v / 2))),
-                Rgb(v, 255 - v, v / 2)
+    fn hsv_round_trips_closely_and_knows_the_primaries() {
+        assert_eq!(hsv_to_rgb(0.0, 1.0, 1.0), Rgb(255, 0, 0));
+        assert_eq!(hsv_to_rgb(120.0, 1.0, 1.0), Rgb(0, 255, 0));
+        assert_eq!(hsv_to_rgb(240.0, 1.0, 1.0), Rgb(0, 0, 255));
+        assert_eq!(hsv_to_rgb(0.0, 0.0, 1.0), Rgb(255, 255, 255));
+        assert_eq!(rgb_to_hsv(Rgb(0, 0, 0)), (0.0, 0.0, 0.0));
+        for (r, g, b) in [
+            (12, 200, 99),
+            (255, 128, 0),
+            (3, 3, 250),
+            (77, 77, 77),
+            (200, 10, 120),
+        ] {
+            let (h, s, v) = rgb_to_hsv(Rgb(r, g, b));
+            let Rgb(r2, g2, b2) = hsv_to_rgb(h, s, v);
+            assert!(
+                r.abs_diff(r2) <= 1 && g.abs_diff(g2) <= 1 && b.abs_diff(b2) <= 1,
+                "{r},{g},{b}"
             );
         }
     }

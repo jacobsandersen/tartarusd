@@ -126,7 +126,7 @@ pub fn keymap_section(ui: &Rc<Ui>) -> gtk::Box {
         btn.set_child(Some(&inner));
         btn.add_css_class("keycap");
         let (u, key) = (Rc::clone(ui), slot.physical());
-        btn.connect_clicked(move |_| u.select_key(key));
+        btn.connect_clicked(move |_| u.click_key(key));
         grid.attach(&btn, slot.col, slot.row, slot.w, slot.h);
         caps.push(Cap { slot, btn, bind });
     }
@@ -137,7 +137,17 @@ pub fn keymap_section(ui: &Rc<Ui>) -> gtk::Box {
     mode.set_tooltip_text(Some("Hold for Hypershift. Double-tap to switch modes."));
     grid.attach(&mode, 4, 3, 1, 1);
     *ui.w.caps.borrow_mut() = caps;
-    b.append(&grid);
+    let overlay = gtk::Overlay::new();
+    overlay.set_halign(gtk::Align::Center);
+    overlay.set_child(Some(&grid));
+    ui.w.band.add_css_class("rubber");
+    ui.w.band.set_halign(gtk::Align::Start);
+    ui.w.band.set_valign(gtk::Align::Start);
+    ui.w.band.set_can_target(false);
+    ui.w.band.set_visible(false);
+    overlay.add_overlay(&ui.w.band);
+    super::selection::install_gestures(ui, &overlay);
+    b.append(&overlay);
 
     ui.w.inspector.set_margin_top(4);
     b.append(&ui.w.inspector);
@@ -145,15 +155,8 @@ pub fn keymap_section(ui: &Rc<Ui>) -> gtk::Box {
 }
 
 impl Ui {
-    pub fn select_key(self: &Rc<Self>, key: PhysicalKey) {
-        self.st.borrow_mut().selected = Some(key);
-        self.rebuild_inspector();
-        self.refresh_keypad();
-        self.reveal_inspector();
-    }
-
     /// Scroll so the whole inspector is visible; it sits below the pad.
-    fn reveal_inspector(self: &Rc<Self>) {
+    pub fn reveal_inspector(self: &Rc<Self>) {
         let ui = Rc::clone(self);
         glib::idle_add_local_once(move || {
             let scroll = &ui.w.scroll;
@@ -170,8 +173,14 @@ impl Ui {
 
     /// Redraw every cap from the draft and the selection.
     pub fn refresh_keypad(self: &Rc<Self>) {
+        self.paint_keypad();
+        self.sync_preview();
+    }
+
+    fn paint_keypad(&self) {
         let st = self.st.borrow();
         let caps = self.w.caps.borrow();
+        let mut used = std::collections::BTreeSet::new();
         for cap in caps.iter() {
             let key = cap.slot.physical();
             let btn = &cap.btn;
@@ -188,7 +197,7 @@ impl Ui {
             for c in stale {
                 btn.remove_css_class(&c);
             }
-            if st.selected == Some(key) {
+            if st.selection.contains(&key) {
                 btn.add_css_class("selected");
             }
             let Some(d) = &st.draft else {
@@ -214,10 +223,12 @@ impl Ui {
                         let c = f.keys.get(&k).copied().unwrap_or(f.default);
                         btn.add_css_class("lit");
                         btn.add_css_class(&self.colors.class(c));
+                        used.insert(super::colors::key(c));
                     }
                 }
             }
         }
+        self.colors.prune(&used);
     }
 
     pub fn update_capture_sensitivity(&self) {

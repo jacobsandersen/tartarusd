@@ -6,10 +6,14 @@ mod completion;
 mod dialogs;
 mod inspector;
 mod keypad;
+mod picker;
+mod preview;
+mod selection;
 mod sidebar;
 
 use std::{
     cell::{Cell, RefCell},
+    collections::BTreeSet,
     path::PathBuf,
     rc::Rc,
 };
@@ -41,6 +45,8 @@ pub struct State {
     pub mode: usize,
     pub layer: Layer,
     pub view: View,
+    /// Keys chosen on the pad, and the one the bindings editor shows.
+    pub selection: BTreeSet<PhysicalKey>,
     pub selected: Option<PhysicalKey>,
     pub proxy: Option<DaemonProxy<'static>>,
     pub status: Option<Status>,
@@ -55,6 +61,9 @@ pub struct Ui {
     pub colors: colors::Colors,
     /// Set while widgets are being filled from state, so their handlers stay quiet.
     pub building: Cell<bool>,
+    /// Modifier keys held at the last press on the pad.
+    pub mods: Cell<gtk::gdk::ModifierType>,
+    pub pump: preview::Pump,
     pub w: Widgets,
 }
 
@@ -76,6 +85,8 @@ pub struct Widgets {
     pub caps: RefCell<Vec<keypad::Cap>>,
     pub inspector: gtk::Box,
     pub capture: gtk::Button,
+    /// The rubber band drawn while dragging a selection box.
+    pub band: gtk::Box,
     pub recording: RefCell<Option<inspector::Recording>>,
 }
 
@@ -176,6 +187,7 @@ impl Ui {
                     st.mode = 0;
                     st.layer = Layer::Base;
                     st.selected = None;
+                    st.selection.clear();
                     st.bad_rules.clear();
                 }
                 self.rebuild_editor();
@@ -441,6 +453,7 @@ pub fn build(app: &adw::Application, dir: PathBuf) -> Rc<Ui> {
         caps: RefCell::new(Vec::new()),
         inspector: gtk::Box::new(gtk::Orientation::Vertical, 12),
         capture: gtk::Button::with_label("Identify key on pad"),
+        band: gtk::Box::new(gtk::Orientation::Vertical, 0),
         recording: RefCell::new(None),
     };
     let toasts = adw::ToastOverlay::new();
@@ -463,6 +476,7 @@ pub fn build(app: &adw::Application, dir: PathBuf) -> Rc<Ui> {
             mode: 0,
             layer: Layer::Base,
             view: View::Bindings,
+            selection: BTreeSet::new(),
             selected: None,
             proxy: None,
             status: None,
@@ -470,6 +484,8 @@ pub fn build(app: &adw::Application, dir: PathBuf) -> Rc<Ui> {
         }),
         colors: colors::Colors::install(),
         building: Cell::new(false),
+        mods: Cell::new(gtk::gdk::ModifierType::empty()),
+        pump: preview::Pump::default(),
         w,
     });
 
@@ -481,6 +497,7 @@ pub fn build(app: &adw::Application, dir: PathBuf) -> Rc<Ui> {
 
     install_actions(&ui);
     inspector::install_recorder(&ui);
+    selection::install_shortcuts(&ui);
     app.set_accels_for_action("win.save", &["<Primary>s"]);
 
     let u = Rc::clone(&ui);
@@ -489,6 +506,7 @@ pub fn build(app: &adw::Application, dir: PathBuf) -> Rc<Ui> {
             if let Some(p) = u.st.borrow().proxy.clone() {
                 daemon::stop_capture_now(&p);
             }
+            u.end_preview_blocking();
             return glib::Propagation::Proceed;
         }
         let (u2, win) = (Rc::clone(&u), win.clone());
@@ -640,11 +658,14 @@ fn start_daemon_watch(ui: &Rc<Ui>) {
                     Ok((p, s)) => {
                         ui.st.borrow_mut().proxy = Some(p);
                         ui.set_status(Some(s));
+                        ui.renew_preview();
                     }
                     Err(_) => ui.set_status(None),
                 },
             }
             ui.update_capture_sensitivity();
+            // The daemon drops a preview after a while; keep it on the pad while wanted.
+            ui.renew_preview();
             glib::timeout_future_seconds(2).await;
         }
     });

@@ -7,7 +7,7 @@ use adw::prelude::*;
 use gtk::glib;
 use tartarusd_core::{Action, Key, PhysicalKey, Rgb};
 
-use super::{Ui, View, clear, colors};
+use super::{State, Ui, View, clear, picker};
 use crate::{
     edit::{self, Layer},
     layout, text,
@@ -65,20 +65,23 @@ impl Ui {
     pub fn rebuild_inspector(self: &Rc<Self>) {
         self.cancel_recording();
         clear(&self.w.inspector);
-        let (sel, view, has_draft) = {
+        let (sel, count, view, has_draft) = {
             let st = self.st.borrow();
-            (st.selected, st.view, st.draft.is_some())
+            (st.selected, st.selection.len(), st.view, st.draft.is_some())
         };
         if !has_draft {
             return;
         }
-        let Some(sel) = sel.filter(|k| layout::slot_for(*k).is_some()) else {
-            self.w.inspector.append(&dim("Select a key."));
-            return;
-        };
         match view {
-            View::Bindings => self.bindings_inspector(sel),
-            View::Lighting => self.lighting_inspector(sel),
+            View::Lighting => self.lighting_inspector(),
+            View::Bindings => match sel.filter(|k| layout::slot_for(*k).is_some()) {
+                Some(key) if count == 1 => self.bindings_inspector(key),
+                Some(_) => self
+                    .w
+                    .inspector
+                    .append(&dim("Select one key to edit its action.")),
+                None => self.w.inspector.append(&dim("Select a key.")),
+            },
         }
     }
 
@@ -220,7 +223,8 @@ impl Ui {
                     }
                 });
                 let ui = Rc::clone(self);
-                let (entry2, rec2) = (entry.clone(), rec.clone());
+                // Weak references: the button's own handler must not keep the button alive.
+                let (entry2, rec2) = (entry.downgrade(), rec.downgrade());
                 rec.connect_toggled(move |r| {
                     if r.is_active() {
                         let (e, r2) = (entry2.clone(), rec2.clone());
@@ -228,8 +232,12 @@ impl Ui {
                             held: Vec::new(),
                             chord: Vec::new(),
                             on_done: Box::new(move |keys| {
-                                e.set_text(&text::chord_text(&keys));
-                                r2.set_active(false);
+                                if let Some(e) = e.upgrade() {
+                                    e.set_text(&text::chord_text(&keys));
+                                }
+                                if let Some(r) = r2.upgrade() {
+                                    r.set_active(false);
+                                }
                             }),
                         });
                         r.set_label("Press the keys…");
@@ -310,23 +318,25 @@ impl Ui {
         }
     }
 
-    fn lighting_inspector(self: &Rc<Self>, sel: PhysicalKey) {
-        let (mode, layer, frame, has_led) = {
+    fn lighting_inspector(self: &Rc<Self>) {
+        let (mode, layer, frame, keys, selected) = {
             let st = self.st.borrow();
             let f = st
                 .draft
                 .as_ref()
                 .and_then(|d| edit::frame(d, st.mode, st.layer))
                 .cloned();
-            (
-                st.mode,
-                st.layer,
-                f,
-                layout::slot_for(sel).is_some_and(layout::Slot::has_led),
-            )
+            (st.mode, st.layer, f, lit_keys(&st), st.selection.len())
         };
         let b = &self.w.inspector;
-        b.append(&self.heading(sel));
+        let title = gtk::Label::new(Some(&format!(
+            "Lighting · {} · mode {}",
+            layer_name(layer),
+            mode + 1
+        )));
+        title.add_css_class("title-4");
+        title.set_xalign(0.0);
+        b.append(&title);
 
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
@@ -349,67 +359,141 @@ impl Ui {
             ui.edit(|p| edit::set_frame_enabled(p, mode, layer, on));
             ui.rebuild_inspector();
         });
-
-        if let Some(f) = &frame {
-            let default = dialog_button(f.default);
-            let row = adw::ActionRow::builder()
-                .title("Default color")
-                .subtitle("Keys without their own color")
-                .build();
-            row.add_suffix(&default);
-            list.append(&row);
-            let ui = Rc::clone(self);
-            default.connect_rgba_notify(move |b| {
-                if !ui.building.get() {
-                    let c = colors::from_rgba(&b.rgba());
-                    ui.edit(|p| edit::set_default_color(p, mode, layer, c));
-                }
-            });
-
-            if has_led && let PhysicalKey::Key(key) = sel {
-                let current = f.keys.get(&key).copied();
-                let btn = dialog_button(current.unwrap_or(f.default));
-                let reset = gtk::Button::from_icon_name("edit-clear-symbolic");
-                reset.set_valign(gtk::Align::Center);
-                reset.add_css_class("flat");
-                reset.set_tooltip_text(Some("Use default color"));
-                reset.set_sensitive(current.is_some());
-                let row = adw::ActionRow::builder().title("This key").build();
-                row.add_suffix(&reset);
-                row.add_suffix(&btn);
-                list.append(&row);
-                let (ui, reset2) = (Rc::clone(self), reset.clone());
-                btn.connect_rgba_notify(move |b| {
-                    if !ui.building.get() {
-                        let c = colors::from_rgba(&b.rgba());
-                        ui.edit(|p| edit::set_color(p, mode, layer, key, Some(c)));
-                        reset2.set_sensitive(true);
-                    }
-                });
-                let ui = Rc::clone(self);
-                reset.connect_clicked(move |_| {
-                    ui.edit(|p| edit::set_color(p, mode, layer, key, None));
-                    ui.rebuild_inspector();
-                });
-            }
-        }
         b.append(&list);
-        if frame.is_none() {
+
+        let Some(frame) = frame else {
             b.append(&dim("Turn on custom lighting to set key colors."));
+            return;
+        };
+
+        // What is selected, and quick ways to change it.
+        let summary = match (selected, keys.len()) {
+            (0, _) => {
+                "Select keys: click, Ctrl-click, or drag a box. Ctrl+A selects all.".to_owned()
+            }
+            (_, 0) => "The selected keys have no light.".to_owned(),
+            (n, k) if n == k => format!("{k} selected"),
+            (n, k) => format!("{k} of {n} selected keys have a light"),
+        };
+        let bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let label = gtk::Label::new(Some(&summary));
+        label.set_xalign(0.0);
+        label.set_hexpand(true);
+        label.set_wrap(true);
+        bar.append(&label);
+        let all = gtk::Button::with_label("Select all");
+        let none = gtk::Button::with_label("Clear");
+        let ui = Rc::clone(self);
+        all.connect_clicked(move |_| ui.select_all());
+        let ui = Rc::clone(self);
+        none.connect_clicked(move |_| ui.clear_selection());
+        bar.append(&all);
+        bar.append(&none);
+        b.append(&bar);
+
+        if let Some(first) = keys.first() {
+            let initial = {
+                let st = self.st.borrow();
+                let primary = st.selected.and_then(|p| match p {
+                    PhysicalKey::Key(k) if keys.contains(&k) => Some(k),
+                    _ => None,
+                });
+                st.draft
+                    .as_ref()
+                    .and_then(|d| edit::color_of(d, mode, layer, primary.unwrap_or(*first)))
+                    .unwrap_or(frame.default)
+            };
+            let ui = Rc::clone(self);
+            let picker = picker::new(initial, move |c| ui.apply_color(Some(c)));
+            b.append(&picker.root);
+
+            let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            let copy = gtk::Button::with_label("Copy color");
+            let paste = gtk::Button::with_label("Paste color");
+            let reset = gtk::Button::with_label("Use default");
+            let ui = Rc::clone(self);
+            copy.connect_clicked(move |_| ui.copy_color());
+            let ui = Rc::clone(self);
+            paste.connect_clicked(move |_| ui.paste_color());
+            let (ui, default) = (Rc::clone(self), frame.default);
+            reset.connect_clicked(move |_| {
+                ui.apply_color(None);
+                picker.set(default);
+            });
+            for w in [&copy, &paste, &reset] {
+                actions.append(w);
+            }
+            b.append(&actions);
         }
-        if frame.is_some() && !has_led {
-            b.append(&dim("This key has no light."));
+
+        let expander = gtk::Expander::new(Some("Default color"));
+        let ui = Rc::clone(self);
+        let default = picker::new(frame.default, move |c| {
+            ui.edit(|p| edit::set_default_color(p, mode, layer, c));
+        });
+        expander.set_child(Some(&default.root));
+        b.append(&expander);
+    }
+
+    /// Set the color of the selected keys that have a light (`None`: the default color).
+    pub fn apply_color(self: &Rc<Self>, c: Option<Rgb>) {
+        let (mode, layer, keys) = {
+            let st = self.st.borrow();
+            (st.mode, st.layer, lit_keys(&st))
+        };
+        if !keys.is_empty() {
+            self.edit(|p| edit::set_colors(p, mode, layer, &keys, c));
         }
     }
-}
 
-fn dialog_button(c: Rgb) -> gtk::ColorDialogButton {
-    let dialog = gtk::ColorDialog::new();
-    dialog.set_with_alpha(false);
-    let b = gtk::ColorDialogButton::new(Some(dialog));
-    b.set_rgba(&colors::to_rgba(c));
-    b.set_valign(gtk::Align::Center);
-    b
+    /// The color of the selected key (the one last clicked, if it has a light), if the layer
+    /// has lighting.
+    fn selected_color(&self) -> Option<Rgb> {
+        let st = self.st.borrow();
+        let keys = lit_keys(&st);
+        let key = st
+            .selected
+            .and_then(|p| match p {
+                PhysicalKey::Key(k) if keys.contains(&k) => Some(k),
+                _ => None,
+            })
+            .or_else(|| keys.first().copied())?;
+        edit::color_of(st.draft.as_ref()?, st.mode, st.layer, key)
+    }
+
+    pub fn copy_color(self: &Rc<Self>) {
+        match self.selected_color() {
+            Some(c) => {
+                self.win.clipboard().set_text(&c.to_string());
+                self.toast(&format!("Copied {c}"));
+            }
+            None => self.toast("Select a key with a light first"),
+        }
+    }
+
+    pub fn paste_color(self: &Rc<Self>) {
+        let has_frame = {
+            let st = self.st.borrow();
+            st.draft
+                .as_ref()
+                .is_some_and(|d| edit::frame(d, st.mode, st.layer).is_some())
+        };
+        if !has_frame {
+            return self.toast("Turn on custom lighting first");
+        }
+        let ui = Rc::clone(self);
+        let clipboard = self.win.clipboard();
+        glib::spawn_future_local(async move {
+            let text = clipboard.read_text_future().await.ok().flatten();
+            match text.as_deref().and_then(picker::parse_hex) {
+                Some(c) => {
+                    ui.apply_color(Some(c));
+                    ui.rebuild_inspector();
+                }
+                None => ui.toast("The clipboard has no color"),
+            }
+        });
+    }
 }
 
 fn find_dropdown(b: &gtk::Box) -> Option<gtk::DropDown> {
@@ -474,4 +558,17 @@ pub fn install_recorder(ui: &Rc<Ui>) {
         }
     });
     ui.win.add_controller(ctl);
+}
+
+/// The selected keys that have a backlight LED.
+fn lit_keys(st: &State) -> Vec<Key> {
+    st.selection
+        .iter()
+        .filter_map(|k| match k {
+            PhysicalKey::Key(key) if layout::slot_for(*k).is_some_and(layout::Slot::has_led) => {
+                Some(*key)
+            }
+            _ => None,
+        })
+        .collect()
 }

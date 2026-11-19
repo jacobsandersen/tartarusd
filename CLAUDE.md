@@ -20,7 +20,8 @@ macros + Hypershift (6), per-key lighting (6b), GTK editor (7), input-remapper i
 packaging + README (9). The mode key supports
 two gestures (`mode_switch`, default `double_tap`).
 
-All initial milestones are done. The GUI (`crates/gui`, plain gtk4-rs + libadwaita, not relm4)
+All initial milestones are done. The GUI (`crates/gui`, plain gtk4-rs + libadwaita, not relm4; lighting edits preview on the pad
+through the daemon's `PreviewFrame`, unit tested in the daemon but not yet run on hardware)
 is built and screenshot-checked, but its click-through behavior has not been exercised on a
 real session end to end; verify before claiming it works. Pure editor logic (`edit`, `store`,
 `text`, `layout`) is unit tested; widgets are not. Everything else has unit tests; most of it
