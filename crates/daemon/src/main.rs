@@ -225,8 +225,8 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             () = tokio::time::sleep_until(
-                    app.macro_deadline().map_or_else(Instant::now, |d| start + d)
-                ), if app.macro_deadline().is_some() => {
+                    app.deadline().map_or_else(Instant::now, |d| start + d)
+                ), if app.deadline().is_some() => {
                 if let Err(err) = app.tick(start.elapsed()) {
                     break 'run Err(err);
                 }

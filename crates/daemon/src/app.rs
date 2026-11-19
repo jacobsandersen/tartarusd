@@ -128,12 +128,13 @@ impl<S: Sink> App<S> {
         Ok(())
     }
 
-    /// When the next macro step is due (relative to the daemon's start), if any.
-    pub fn macro_deadline(&self) -> Option<Duration> {
+    /// When [`App::tick`] next has work (relative to the daemon's start): a held mode
+    /// key reaching the tap term, or a macro step.
+    pub fn deadline(&self) -> Option<Duration> {
         self.machine.next_deadline()
     }
 
-    /// Perform macro steps that are due at `now`.
+    /// Perform what is due at `now`: Hypershift promotion and macro steps.
     pub fn tick(&mut self, now: Duration) -> anyhow::Result<()> {
         let fx = self.machine.tick(now);
         self.apply(fx)
@@ -496,6 +497,32 @@ mod tests {
     }
 
     #[test]
+    fn holding_the_mode_key_shows_hypershift_on_a_tick_without_another_key() {
+        let mut f = one("P");
+        f.app.input(Duration::ZERO, &raw("KEY_LEFTALT", 1)).unwrap();
+        let due = f
+            .app
+            .deadline()
+            .expect("a held mode key schedules its promotion");
+        assert!(
+            drain(&mut f.sigs).is_empty(),
+            "nothing is announced before the tap term"
+        );
+
+        f.app.tick(due).unwrap();
+        assert_eq!(drain(&mut f.sigs), [Signal::ShiftChanged(true)]);
+        assert_eq!(f.app.deadline(), None);
+
+        f.app.input(due, &raw("KEY_LEFTALT", 0)).unwrap();
+        assert_eq!(drain(&mut f.sigs), [Signal::ShiftChanged(false)]);
+        assert_eq!(
+            cmd(&mut f.app, Command::GetState).mode,
+            0,
+            "a hold never changes the mode"
+        );
+    }
+
+    #[test]
     fn capture_suspends_remapping_and_reports_presses() {
         let mut f = one("P");
         f.app.input(Duration::ZERO, &raw("KEY_1", 1)).unwrap();
@@ -690,12 +717,12 @@ mod tests {
         let mut f = macro_fixture();
         f.app.input(Duration::ZERO, &raw("KEY_1", 1)).unwrap();
         assert_eq!(f.out.take_keys(), [down("KEY_E"), up("KEY_E")]);
-        assert_eq!(f.app.macro_deadline(), Some(Duration::from_millis(50)));
+        assert_eq!(f.app.deadline(), Some(Duration::from_millis(50)));
         f.app.tick(Duration::from_millis(49)).unwrap();
         assert!(f.out.take_keys().is_empty());
         f.app.tick(Duration::from_millis(50)).unwrap();
         assert_eq!(f.out.take_keys(), [down("KEY_F"), up("KEY_F")]);
-        assert_eq!(f.app.macro_deadline(), None);
+        assert_eq!(f.app.deadline(), None);
     }
 
     #[test]
@@ -704,7 +731,7 @@ mod tests {
         f.app.input(Duration::ZERO, &raw("KEY_1", 1)).unwrap();
         f.out.take_keys();
         cmd(&mut f.app, Command::StartCapture);
-        assert_eq!(f.app.macro_deadline(), None);
+        assert_eq!(f.app.deadline(), None);
         f.app.tick(Duration::from_secs(5)).unwrap();
         assert!(f.out.take_keys().is_empty(), "no output while capturing");
     }

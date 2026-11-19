@@ -201,17 +201,30 @@ impl Machine {
         fx
     }
 
-    /// Perform every macro step that is due at `now`. Call when [`Machine::next_deadline`]
-    /// arrives. Steps that are late run in order, each chained from `now`.
+    /// Perform whatever is due at `now`: the mode key's promotion to Hypershift, and
+    /// macro steps. Call when [`Machine::next_deadline`] arrives. Late macro steps run in
+    /// order, each chained from `now`.
     pub fn tick(&mut self, now: Duration) -> Vec<Effect> {
         let mut fx = Vec::new();
+        if let ModeKeyState::Pending(t0) = self.mode_key
+            && now.saturating_sub(t0) >= self.cfg.tap_term
+        {
+            // Held past the tap term with nothing else pressed: it is a hold, so show
+            // Hypershift now rather than waiting for another key.
+            self.enter_shift(&mut fx);
+        }
         self.run_due(now, &mut fx);
         fx
     }
 
-    /// When the next macro step is due, if any macro is running.
+    /// When [`Machine::tick`] next has something to do: the mode key reaching the tap
+    /// term, or the next macro step.
     pub fn next_deadline(&self) -> Option<Duration> {
-        self.macros.iter().map(|m| m.due).min()
+        let promotion = match self.mode_key {
+            ModeKeyState::Pending(t0) => Some(t0 + self.cfg.tap_term),
+            _ => None,
+        };
+        self.macros.iter().map(|m| m.due).chain(promotion).min()
     }
 
     fn start_macro(&mut self, now: Duration, steps: Arc<[Step]>, fx: &mut Vec<Effect>) {
@@ -263,7 +276,9 @@ impl Machine {
     fn mode_key_up(&mut self, now: Duration, fx: &mut Vec<Effect>) {
         match std::mem::replace(&mut self.mode_key, ModeKeyState::Idle) {
             ModeKeyState::Pending(t0) => {
-                if now.saturating_sub(t0) <= self.cfg.tap_term {
+                // Strictly shorter than the tap term is a tap; at or beyond it the key is a
+                // hold (whether or not a tick has promoted it yet).
+                if now.saturating_sub(t0) < self.cfg.tap_term {
                     let next = (self.mode + 1) % self.profile.modes.len();
                     self.change_mode(next, fx);
                 }
@@ -284,15 +299,20 @@ impl Machine {
             return; // auto-repeat
         }
         if matches!(self.mode_key, ModeKeyState::Pending(_)) {
-            self.mode_key = ModeKeyState::Shifted;
-            fx.push(Effect::ShiftChanged(true));
-            if self.cfg.hypershift_led_mask.is_some() {
-                fx.push(Effect::SetLed(self.led()));
-            }
-            self.push_shift_frame(fx);
+            self.enter_shift(fx);
         }
         let action = self.lookup(pk);
         self.perform(now, pk, action, fx);
+    }
+
+    /// Pending -> Shifted, with its visible effects (signal, LED, frame).
+    fn enter_shift(&mut self, fx: &mut Vec<Effect>) {
+        self.mode_key = ModeKeyState::Shifted;
+        fx.push(Effect::ShiftChanged(true));
+        if self.cfg.hypershift_led_mask.is_some() {
+            fx.push(Effect::SetLed(self.led()));
+        }
+        self.push_shift_frame(fx);
     }
 
     /// On entering or leaving Hypershift, update the frame only if this mode has a
@@ -483,9 +503,11 @@ KEY_1 = "KEY_T"
         press(&mut m, 0, "KEY_LEFTALT");
         assert!(release(&mut m, term + 1, "KEY_LEFTALT").is_empty());
         assert_eq!(m.mode(), 0);
-        // Exactly tap_term counts as a tap.
+        // One millisecond under the tap term is a tap; the tap term itself is a hold.
         press(&mut m, 10_000, "KEY_LEFTALT");
-        assert!(!release(&mut m, 10_000 + term, "KEY_LEFTALT").is_empty());
+        assert!(!release(&mut m, 10_000 + term - 1, "KEY_LEFTALT").is_empty());
+        press(&mut m, 20_000, "KEY_LEFTALT");
+        assert!(release(&mut m, 20_000 + term, "KEY_LEFTALT").is_empty());
     }
 
     #[test]
@@ -505,6 +527,90 @@ KEY_1 = "KEY_T"
         );
         assert_eq!(m.mode(), 0);
         assert!(!m.is_shifted());
+    }
+
+    fn term_ms() -> u64 {
+        Config::default().tap_term.as_millis() as u64
+    }
+
+    #[test]
+    fn holding_past_the_tap_term_enters_hypershift_without_another_key() {
+        let term = term_ms();
+        let mut m = machine();
+        assert!(press(&mut m, 100, "KEY_LEFTALT").is_empty());
+        assert_eq!(m.next_deadline(), Some(ms(100 + term)));
+        assert!(m.tick(ms(100 + term - 1)).is_empty(), "still undecided");
+        assert!(!m.is_shifted());
+
+        assert_eq!(m.tick(ms(100 + term)), vec![Effect::ShiftChanged(true)]);
+        assert!(m.is_shifted());
+        assert_eq!(m.next_deadline(), None, "promotion happens once");
+
+        // Another key now uses the Hypershift layer and does not re-announce the shift.
+        assert_eq!(
+            press(&mut m, 100 + term + 50, "KEY_1"),
+            vec![down("KEY_F1")]
+        );
+        release(&mut m, 100 + term + 60, "KEY_1");
+
+        // Releasing after a promoted hold leaves the mode alone, like any Hypershift use.
+        assert_eq!(
+            release(&mut m, 100 + term + 70, "KEY_LEFTALT"),
+            vec![Effect::ShiftChanged(false)]
+        );
+        assert_eq!(m.mode(), 0);
+    }
+
+    #[test]
+    fn promoted_hold_released_alone_is_not_a_tap() {
+        let term = term_ms();
+        let mut m = machine();
+        press(&mut m, 0, "KEY_LEFTALT");
+        m.tick(ms(term));
+        assert_eq!(
+            release(&mut m, term + 10, "KEY_LEFTALT"),
+            vec![Effect::ShiftChanged(false)]
+        );
+        assert_eq!(m.mode(), 0, "no mode change from a hold");
+    }
+
+    #[test]
+    fn a_tap_never_promotes() {
+        let mut m = machine();
+        press(&mut m, 0, "KEY_LEFTALT");
+        assert!(release(&mut m, 50, "KEY_LEFTALT").contains(&Effect::ModeChanged(1)));
+        assert_eq!(
+            m.next_deadline(),
+            None,
+            "no pending promotion after release"
+        );
+        assert!(m.tick(ms(10_000)).is_empty());
+    }
+
+    #[test]
+    fn promotion_shows_the_hypershift_led_and_frame() {
+        let term = term_ms();
+        let cfg = Config {
+            hypershift_led_mask: Some(7),
+            ..Config::default()
+        };
+        let mut m = Machine::new(cfg, profile(LIT));
+        press(&mut m, 0, "KEY_LEFTALT");
+        let fx = m.tick(ms(term));
+        assert_eq!(fx[..2], [Effect::ShiftChanged(true), Effect::SetLed(7)]);
+        assert_eq!(w_cell(frames(&fx)[0].as_ref().unwrap()), [16, 16, 16]);
+        let back = release(&mut m, term + 5, "KEY_LEFTALT");
+        assert_eq!(back[..2], [Effect::ShiftChanged(false), Effect::SetLed(1)]);
+        assert_eq!(w_cell(frames(&back)[0].as_ref().unwrap()), [0, 255, 255]);
+    }
+
+    #[test]
+    fn release_at_the_tap_term_without_a_tick_is_still_a_hold() {
+        let term = term_ms();
+        let mut m = machine();
+        press(&mut m, 0, "KEY_LEFTALT");
+        assert!(release(&mut m, term, "KEY_LEFTALT").is_empty());
+        assert_eq!(m.mode(), 0);
     }
 
     #[test]
