@@ -34,11 +34,11 @@ pub async fn status(p: &DaemonProxy<'_>) -> zbus::Result<Status> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum CaptureError {
-    #[error("the daemon did not answer: {0}")]
+    #[error("Daemon error: {0}")]
     Bus(#[from] zbus::Error),
-    #[error("no key was pressed within {0} seconds")]
+    #[error("No key pressed in {0} seconds")]
     TimedOut(u64),
-    #[error("the daemon reported an unknown key `{0}`")]
+    #[error("Unknown key `{0}`")]
     Unknown(String),
 }
 

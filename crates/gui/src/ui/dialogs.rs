@@ -31,7 +31,7 @@ impl Ui {
         }
         let d = adw::AlertDialog::new(
             Some("Save changes?"),
-            Some("This profile has edits that aren't saved yet."),
+            Some("This profile has unsaved changes."),
         );
         d.add_response("cancel", "Cancel");
         d.add_response("discard", "Discard");
@@ -87,7 +87,7 @@ impl Ui {
             let st = self.st.borrow();
             if store::name_taken(&st.entries, name, None) {
                 drop(st);
-                return self.toast("Another profile already has that name");
+                return self.toast("Another profile has that name");
             }
             (
                 st.dir.clone(),
@@ -105,7 +105,7 @@ impl Ui {
                 self.rescan();
                 self.open_file(&file);
             }
-            Err(e) => self.toast(&format!("Could not create it: {e:#}")),
+            Err(e) => self.toast(&format!("Could not create: {e:#}")),
         }
     }
 
@@ -120,7 +120,7 @@ impl Ui {
         let ui = Rc::clone(self);
         self.confirm(
             &format!("Delete “{name}”?"),
-            &format!("This deletes {file} from disk."),
+            &format!("This deletes {file}."),
             "Delete",
             move || {
                 let dir = ui.st.borrow().dir.clone();
@@ -129,7 +129,7 @@ impl Ui {
                         ui.close_profile();
                         ui.rescan();
                     }
-                    Err(e) => ui.toast(&format!("Could not delete it: {e}")),
+                    Err(e) => ui.toast(&format!("Could not delete: {e}")),
                 }
             },
         );
@@ -172,7 +172,7 @@ impl Ui {
             .build();
         let modes = adw::SpinRow::with_range(1.0, 3.0, 1.0);
         modes.set_title("Modes");
-        modes.set_subtitle("The preset fills mode 1; extra modes start empty");
+        modes.set_subtitle("Mode 1 gets the bindings; other modes are empty");
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
         list.set_selection_mode(gtk::SelectionMode::None);
@@ -207,10 +207,8 @@ impl Ui {
 
     fn show_warnings(&self, warnings: &[String]) {
         let d = adw::AlertDialog::new(
-            Some("Some entries were skipped"),
-            Some(
-                "These can't be converted automatically. Add them by hand if you still need them.",
-            ),
+            Some("Skipped entries"),
+            Some("These could not be converted."),
         );
         let label = gtk::Label::new(Some(&warnings.join("\n")));
         label.set_wrap(true);

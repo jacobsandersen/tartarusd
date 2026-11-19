@@ -29,22 +29,19 @@ pub fn keymap_section(ui: &Rc<Ui>) -> gtk::Box {
     ui.w.modes.add_css_class("linked");
     bar.append(&ui.w.modes);
     let add = gtk::Button::from_icon_name("list-add-symbolic");
-    add.set_tooltip_text(Some("Add a mode"));
+    add.set_tooltip_text(Some("Add mode"));
     let u = Rc::clone(ui);
     add.connect_clicked(move |_| u.add_mode());
     let del = gtk::Button::from_icon_name("list-remove-symbolic");
-    del.set_tooltip_text(Some("Remove this mode"));
+    del.set_tooltip_text(Some("Remove mode"));
     let u = Rc::clone(ui);
     del.connect_clicked(move |_| u.remove_mode());
     bar.append(&add);
     bar.append(&del);
     let leds = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    leds.append(&gtk::Label::new(Some("Profile LEDs:")));
+    leds.append(&gtk::Label::new(Some("LEDs:")));
     for (bit, chk) in ui.w.leds.iter().enumerate() {
-        chk.set_tooltip_text(Some(&format!(
-            "{} LED while this mode is active",
-            LED_NAMES[bit]
-        )));
+        chk.set_tooltip_text(Some(&format!("{} LED for this mode", LED_NAMES[bit])));
         let u = Rc::clone(ui);
         chk.connect_toggled(move |c| {
             if !u.building.get() {
@@ -62,7 +59,7 @@ pub fn keymap_section(ui: &Rc<Ui>) -> gtk::Box {
     layer.add_css_class("linked");
     ui.w.layer[1].set_group(Some(&ui.w.layer[0]));
     ui.w.layer[0].set_active(true);
-    ui.w.layer[1].set_tooltip_text(Some("The layer that is active while the mode key is held"));
+    ui.w.layer[1].set_tooltip_text(Some("Active while the mode key is held"));
     for (i, t) in ui.w.layer.iter().enumerate() {
         let u = Rc::clone(ui);
         t.connect_toggled(move |t| {
@@ -100,7 +97,7 @@ pub fn keymap_section(ui: &Rc<Ui>) -> gtk::Box {
     toggles.append(&layer);
     toggles.append(&view);
     ui.w.capture
-        .set_tooltip_text(Some("Press a key on the Tartarus to select it here"));
+        .set_tooltip_text(Some("Press a key on the pad to select it"));
     let u = Rc::clone(ui);
     ui.w.capture.connect_clicked(move |_| u.identify_key());
     toggles.append(&ui.w.capture);
@@ -137,9 +134,7 @@ pub fn keymap_section(ui: &Rc<Ui>) -> gtk::Box {
     let mode = gtk::Button::with_label("Hyper\nkey");
     mode.set_sensitive(false);
     mode.add_css_class("mode-key");
-    mode.set_tooltip_text(Some(
-        "The mode key never sends anything: hold it for Hypershift, double-tap it to switch modes",
-    ));
+    mode.set_tooltip_text(Some("Hold for Hypershift. Double-tap to switch modes."));
     grid.attach(&mode, 4, 3, 1, 1);
     *ui.w.caps.borrow_mut() = caps;
     b.append(&grid);
@@ -229,9 +224,9 @@ impl Ui {
         let on = self.st.borrow().proxy.is_some();
         self.w.capture.set_sensitive(on);
         self.w.capture.set_tooltip_text(Some(if on {
-            "Press a key on the Tartarus to select it here"
+            "Press a key on the pad to select it"
         } else {
-            "Needs the tartarusd daemon to be running"
+            "Needs the daemon"
         }));
     }
 
@@ -250,7 +245,7 @@ impl Ui {
             match res {
                 Ok(key) => match layout::slot_for(key) {
                     Some(_) => ui.select_key(key),
-                    None => ui.toast("That's the mode key. It can't be rebound"),
+                    None => ui.toast("The mode key can't be changed"),
                 },
                 Err(e) => ui.toast(&e.to_string()),
             }

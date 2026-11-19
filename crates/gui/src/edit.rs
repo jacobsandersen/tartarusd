@@ -17,15 +17,15 @@ pub enum Layer {
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum EditError {
-    #[error("a profile has at most {0} modes (turn on extended modes for up to 7)")]
+    #[error("At most {0} modes; turn on extended modes for 7")]
     TooManyModes(usize),
-    #[error("a profile needs at least one mode")]
+    #[error("A profile needs at least one mode")]
     LastMode,
-    #[error("another mode already uses that LED combination")]
+    #[error("Another mode uses these LEDs")]
     LedInUse,
-    #[error("LED combination must be 1..=7")]
+    #[error("Select at least one LED")]
     BadLed,
-    #[error("remove modes until at most 3 are left before turning extended modes off")]
+    #[error("Remove modes to have 3 or fewer first")]
     TooManyForDefault,
 }
 

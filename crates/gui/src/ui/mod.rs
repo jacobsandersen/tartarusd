@@ -296,7 +296,7 @@ impl Ui {
         let ui = Rc::clone(self);
         self.confirm(
             &format!("Remove mode {}?", i + 1),
-            "Its bindings and lighting are deleted. Keys that switched to it are cleared.",
+            "Deletes its bindings and lighting. Keys that switch to it are cleared.",
             "Remove",
             move || {
                 ui.edit(|p| {
@@ -338,13 +338,13 @@ impl Ui {
             };
             if !st.bad_rules.is_empty() {
                 drop(st);
-                self.toast("Fix the invalid window title pattern first");
+                self.toast("Fix the title regex first");
                 return false;
             }
             (st.dir.clone(), f, d)
         };
         if store::name_taken(&self.st.borrow().entries, &draft.name, Some(&file)) {
-            self.toast("Another profile already has that name");
+            self.toast("Another profile has that name");
             return false;
         }
         match store::save(&dir, &file, &draft) {
@@ -421,11 +421,11 @@ pub fn build(app: &adw::Application, dir: PathBuf) -> Rc<Ui> {
         name: adw::EntryRow::builder().title("Name").build(),
         remember: adw::SwitchRow::builder()
             .title("Remember mode")
-            .subtitle("Return to the last mode when switching back to this profile")
+            .subtitle("Restore the last mode when this profile is used again")
             .build(),
         extended: adw::SwitchRow::builder()
             .title("Extended modes")
-            .subtitle("Allow up to 7 modes instead of 3")
+            .subtitle("Allow up to 7 modes (default 3)")
             .build(),
         rules: gtk::Box::new(gtk::Orientation::Vertical, 6),
         modes: gtk::Box::new(gtk::Orientation::Horizontal, 0),
@@ -531,8 +531,8 @@ fn content_page(ui: &Rc<Ui>) -> adw::NavigationPage {
     header.set_title_widget(Some(&ui.w.status));
 
     let menu = gio::Menu::new();
-    menu.append(Some("Use this profile in the daemon"), Some("win.pin"));
-    menu.append(Some("Back to automatic selection"), Some("win.unpin"));
+    menu.append(Some("Pin in daemon"), Some("win.pin"));
+    menu.append(Some("Unpin"), Some("win.unpin"));
     menu.append(Some("Delete profile…"), Some("win.delete"));
     let mb = gtk::MenuButton::builder()
         .icon_name("open-menu-symbolic")
@@ -562,7 +562,7 @@ fn content_page(ui: &Rc<Ui>) -> adw::NavigationPage {
 
     let empty = adw::StatusPage::builder()
         .title("No profile open")
-        .description("Pick a profile on the left, or create one.")
+        .description("Select or create a profile.")
         .build();
     ui.w.stack.add_named(&empty, Some("empty"));
     ui.w.stack.add_named(&ui.w.scroll, Some("editor"));
@@ -594,7 +594,7 @@ fn install_actions(ui: &Rc<Ui>) {
 impl Ui {
     fn pin(self: &Rc<Self>, on: bool) {
         let Some(proxy) = self.st.borrow().proxy.clone() else {
-            return self.toast("The daemon isn't running");
+            return self.toast("Daemon not running");
         };
         let name = self.st.borrow().draft.as_ref().map(|d| d.name.clone());
         let ui = Rc::clone(self);
@@ -608,14 +608,11 @@ impl Ui {
                     None => return,
                 }
             } else {
-                proxy
-                    .unpin()
-                    .await
-                    .map(|()| "Automatic selection".to_owned())
+                proxy.unpin().await.map(|()| "Unpinned".to_owned())
             };
             match res {
                 Ok(m) => ui.toast(&m),
-                Err(e) => ui.toast(&format!("The daemon refused: {e}")),
+                Err(e) => ui.toast(&format!("Daemon error: {e}")),
             }
             if let Ok(s) = daemon::status(&proxy).await {
                 ui.set_status(Some(s));

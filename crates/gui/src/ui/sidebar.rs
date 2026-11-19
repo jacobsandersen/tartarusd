@@ -80,7 +80,7 @@ impl Ui {
             l.append(&row);
         }
         if st.entries.is_empty() {
-            let hint = gtk::Label::new(Some("No profiles yet.\nUse + to create or import one."));
+            let hint = gtk::Label::new(Some("No profiles.\nUse + to add one."));
             hint.set_justify(gtk::Justification::Center);
             hint.set_wrap(true);
             hint.set_max_width_chars(22);
@@ -183,8 +183,8 @@ pub fn rules_section(ui: &Rc<Ui>) -> gtk::Box {
     let b = gtk::Box::new(gtk::Orientation::Vertical, 8);
     b.append(&section("Automatic switching"));
     let hint = gtk::Label::new(Some(
-        "Switch to this profile when the focused window matches. Needs a daemon built with a \
-         window backend (for example --features hyprland). Every field you fill in must match.",
+        "Use this profile when the focused window matches. Needs a daemon built with a window \
+         backend.",
     ));
     hint.set_wrap(true);
     hint.set_xalign(0.0);

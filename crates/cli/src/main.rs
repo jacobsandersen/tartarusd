@@ -18,37 +18,35 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Show the active profile, mode, and whether it is pinned.
+    /// Show the active profile, mode and pin state.
     State,
     /// List loaded profiles.
     List,
     /// Pin a profile by name.
     Activate { name: String },
-    /// Unpin and return to the default profile.
+    /// Remove the pin.
     Unpin,
-    /// Jump to a mode (0-based index).
+    /// Switch to a mode (0-based).
     Mode { index: u8 },
-    /// Check a profile file for errors (does not need the daemon).
+    /// Check a profile file. Works without the daemon.
     Validate { file: PathBuf },
-    /// Print daemon signals (profile/mode/shift changes, captured keys) as they happen.
+    /// Print daemon events as they happen.
     Monitor,
-    /// Convert an input-remapper preset (JSON) into a tartarusd profile (does not need the
-    /// daemon). Mappings that can't be converted are listed on stderr and skipped.
+    /// Convert an input-remapper preset into a profile. Works without the daemon.
+    /// Mappings that can't be converted are listed on stderr.
     Import {
-        /// The input-remapper preset file.
+        /// Preset file (JSON).
         preset: PathBuf,
-        /// Profile name. Default: the preset's file name without its extension.
+        /// Profile name (default: the file name).
         #[arg(long)]
         name: Option<String>,
-        /// Number of modes to create (1-3). The preset goes into mode 0; the rest start
-        /// empty (keys pass through).
+        /// Number of modes (1-3). The preset fills mode 0.
         #[arg(long, default_value_t = 1)]
         modes: usize,
-        /// The key input-remapper used as Hypershift.
+        /// Hypershift key used in the preset.
         #[arg(long, default_value = "KEY_LEFTALT")]
         mode_key: String,
-        /// Write the profile here (atomically) instead of to stdout, e.g.
-        /// ~/.config/tartarusd/profiles/NAME.toml
+        /// Write to this file instead of stdout.
         #[arg(long)]
         out: Option<PathBuf>,
         /// Overwrite --out if it exists.
@@ -77,10 +75,7 @@ fn describe(e: zbus::Error) -> anyhow::Error {
         _ => false,
     };
     if not_running {
-        return anyhow::anyhow!(
-            "tartarusd is not running ({} is not on the session bus)",
-            tartarusd_ipc::BUS_NAME
-        );
+        return anyhow::anyhow!("tartarusd is not running");
     }
     match &e {
         zbus::Error::MethodError(_, Some(detail), _) => anyhow::anyhow!("{detail}"),

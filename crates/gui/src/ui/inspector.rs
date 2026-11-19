@@ -21,7 +21,7 @@ pub struct Recording {
 }
 
 const KINDS: [&str; 7] = [
-    "Not set (unchanged)",
+    "Not set",
     "Pass through",
     "Disable",
     "Key or chord",
@@ -73,9 +73,7 @@ impl Ui {
             return;
         }
         let Some(sel) = sel.filter(|k| layout::slot_for(*k).is_some()) else {
-            self.w
-                .inspector
-                .append(&dim("Select a key on the pad above to edit it."));
+            self.w.inspector.append(&dim("Select a key."));
             return;
         };
         match view {
@@ -110,16 +108,9 @@ impl Ui {
         };
         let b = &self.w.inspector;
         b.append(&self.heading(sel));
-        let slot = layout::slot_for(sel).expect("checked");
-        b.append(&dim(&format!(
-            "The pad sends {} by default.{}",
-            slot.key,
-            if layer == Layer::Hypershift {
-                " Unset keys here fall through to the base layer."
-            } else {
-                " Unset keys pass through unchanged."
-            }
-        )));
+        if layer == Layer::Hypershift {
+            b.append(&dim("Unset keys use the base layer."));
+        }
 
         let drop = gtk::DropDown::from_strings(&KINDS);
         drop.set_selected(kind_of(cur.as_ref()));
@@ -197,7 +188,7 @@ impl Ui {
                     .build();
                 super::completion::attach(&entry);
                 let rec = gtk::ToggleButton::with_label("Record");
-                rec.set_tooltip_text(Some("Press the keys on your keyboard"));
+                rec.set_tooltip_text(Some("Record keys"));
                 row.append(&entry);
                 row.append(&rec);
                 let err = gtk::Label::new(None);
@@ -207,8 +198,7 @@ impl Ui {
                 detail.append(&row);
                 detail.append(&err);
                 detail.append(&dim(
-                    "Linux key names joined with +, pressed together (Ctrl+C). Type a few letters, like \
-                     \"shift\", and press Tab to complete it.",
+                    "Key names joined with +. Type a few letters and press Tab to complete.",
                 ));
 
                 let (ui, err2) = (Rc::clone(self), err.clone());
@@ -273,9 +263,8 @@ impl Ui {
                 detail.append(&scroll);
                 detail.append(&err);
                 detail.append(&dim(
-                    "One step per line. `KEY_E 50` taps E after 50 ms. `KEY_LEFTSHIFT down 0` and \
-                     `KEY_LEFTSHIFT up 100` press and release separately. Every key pressed must be \
-                     released by the end.",
+                    "One step per line: `KEY_E 50` (tap after 50 ms), `KEY_LEFTSHIFT down 0`, \
+                     `KEY_LEFTSHIFT up 100`. Every key pressed must be released.",
                 ));
                 let ui = Rc::clone(self);
                 view.buffer().connect_changed(move |buf| {
@@ -343,10 +332,10 @@ impl Ui {
         list.add_css_class("boxed-list");
         list.set_selection_mode(gtk::SelectionMode::None);
         let own = adw::SwitchRow::builder()
-            .title(format!("Custom lighting for the {}", layer_name(layer).to_lowercase()))
+            .title("Custom lighting")
             .subtitle(match layer {
-                Layer::Base => "Off: this mode doesn't set key colors. If any other mode or layer does, it shows dark.",
-                Layer::Hypershift => "Off: holding the mode key keeps this mode's colors.",
+                Layer::Base => "Off: keys are dark if another mode sets colors.",
+                Layer::Hypershift => "Off: uses the mode's colors.",
             })
             .active(frame.is_some())
             .build();
@@ -365,7 +354,7 @@ impl Ui {
             let default = dialog_button(f.default);
             let row = adw::ActionRow::builder()
                 .title("Default color")
-                .subtitle("Keys without a color of their own")
+                .subtitle("Keys without their own color")
                 .build();
             row.add_suffix(&default);
             list.append(&row);
@@ -383,7 +372,7 @@ impl Ui {
                 let reset = gtk::Button::from_icon_name("edit-clear-symbolic");
                 reset.set_valign(gtk::Align::Center);
                 reset.add_css_class("flat");
-                reset.set_tooltip_text(Some("Use the default color"));
+                reset.set_tooltip_text(Some("Use default color"));
                 reset.set_sensitive(current.is_some());
                 let row = adw::ActionRow::builder().title("This key").build();
                 row.add_suffix(&reset);
@@ -406,14 +395,10 @@ impl Ui {
         }
         b.append(&list);
         if frame.is_none() {
-            b.append(&dim(
-                "Turn on custom lighting above to choose key colors for this layer.",
-            ));
+            b.append(&dim("Turn on custom lighting to set key colors."));
         }
         if frame.is_some() && !has_led {
-            b.append(&dim(
-                "This key has no backlight. Only keys 01–20 and the wheel click do.",
-            ));
+            b.append(&dim("This key has no light."));
         }
     }
 }
