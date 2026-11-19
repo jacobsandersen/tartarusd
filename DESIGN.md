@@ -250,13 +250,24 @@ Methods:  ListProfiles() → as
 Signals:  ProfileChanged(s)  ModeChanged(y)  ShiftChanged(b)  KeyCaptured(s physical_key)
 ```
 
-`ShiftChanged(true/false)` fires when Hypershift is entered/left (mode key held with
-another input / released), so a bar widget can show it. The core state machine will
-expose it as an effect when the D-Bus server is built (milestone 4).
+Implemented in milestone 4. Object path `/org/tartarusd/Daemon1`; the daemon claims the
+well-known name `org.tartarusd.Daemon1` before grabbing the device, so a second instance
+fails fast. The typed client proxy lives in `crates/ipc`.
+
+- `ShiftChanged(true/false)` fires when Hypershift is entered/left (mode key held with
+  another input / released), so a bar widget can show it.
+- `ActivateProfile` and `SetMode` reject unknown names / out-of-range modes with
+  `InvalidArgs`. `Unpin` returns to the profile chosen at startup.
+- **Capture** suspends remapping (held output keys are released first) and reports
+  every physical key-down, including the mode key, as `KeyCaptured`. It ends on
+  `StopCapture` or on its own 30 s after the last `StartCapture`, so a crashed client
+  can't leave the device dead.
+- Signals are emitted from a separate task; the input path never waits on the bus.
 
 ## CLI (`crates/cli`) — `tartarusctl`
 
-`state`, `list`, `activate <name>`, `unpin`, `mode <n>`, `validate <file>`.
+`state`, `list`, `activate <name>`, `unpin`, `mode <n>`, `validate <file>` (offline, no
+daemon needed), and `monitor` (prints signals as they happen, for debugging and scripts).
 
 ## GUI (`crates/gui`)
 
