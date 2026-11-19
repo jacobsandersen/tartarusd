@@ -64,5 +64,7 @@ Decisions (2026-11-19):
 - Daemon runs as a `systemd --user` service with udev `uaccess`; never require root.
 - Check both feature configs: `cargo clippy --all-targets -- -D warnings` and
   `cargo clippy --all-targets --features tartarusd/hyprland,tartarusd-gui/hyprland -- -D warnings`.
+- Commit messages follow Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`, `feat!:`);
+  release-please builds the changelog and next version from them.
 - Best practices throughout: `cargo clippy -- -D warnings`, `cargo fmt`, unit tests
   for each milestone, `tracing` for logs, typed errors (`thiserror`) in libraries.

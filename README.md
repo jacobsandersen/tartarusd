@@ -248,6 +248,15 @@ The workspace is `crates/core` (pure model and state machine, no I/O), `crates/d
 `crates/ipc` (D-Bus names and client proxy) and `crates/cli`. Start with
 [CLAUDE.md](CLAUDE.md) for the ground rules and [DESIGN.md](DESIGN.md) for the design.
 
+## Releases
+
+[release-please](https://github.com/googleapis/release-please) runs on every push to `main`.
+It reads [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`,
+`feat!:` ...), keeps a release pull request open with the next version and `CHANGELOG.md`,
+and tags the release when that pull request is merged. The version lives in the root
+`Cargo.toml`; the workflow also syncs `Cargo.lock` on the pull request. In the repository
+settings, allow GitHub Actions to create pull requests.
+
 ## License
 
 Not chosen yet.

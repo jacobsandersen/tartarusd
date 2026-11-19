@@ -1,0 +1,41 @@
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      prs_created: ${{ steps.rp.outputs.prs_created }}
+      branch: ${{ steps.rp.outputs.pr && fromJSON(steps.rp.outputs.pr).headBranchName }}
+    steps:
+      - id: rp
+        uses: googleapis/release-please-action@v4
+
+  # release-please bumps the version in Cargo.toml but cannot edit Cargo.lock. Keep the
+  # lockfile in step on the release PR, so `cargo build --locked` keeps working.
+  sync-lock:
+    needs: release-please
+    if: needs.release-please.outputs.prs_created == 'true'
+    runs-on: ubuntu-latest
+    env:
+      # The repo pins a nightly for development; the lockfile update doesn't need it.
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.branch }}
+      - run: cargo update --workspace
+      - run: |
+          if ! git diff --quiet Cargo.lock; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "chore: sync Cargo.lock" Cargo.lock
+            git push
+          fi
