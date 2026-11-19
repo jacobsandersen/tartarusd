@@ -9,6 +9,10 @@ pub const INTERFACE: &str = "org.tartarusd.Daemon1";
 /// capture on its own so a crashed client can't leave the device dead.
 pub const CAPTURE_TIMEOUT_SECS: u64 = 30;
 
+/// How long a previewed frame stays on the pad without a renewing `PreviewFrame`. The daemon
+/// clears it on its own so a crashed client can't leave the pad stuck.
+pub const PREVIEW_TIMEOUT_SECS: u64 = 20;
+
 #[zbus::proxy(
     interface = "org.tartarusd.Daemon1",
     default_service = "org.tartarusd.Daemon1",
@@ -28,6 +32,11 @@ pub trait Daemon {
     /// Ends after [`CAPTURE_TIMEOUT_SECS`] unless renewed.
     fn start_capture(&self) -> zbus::Result<()>;
     fn stop_capture(&self) -> zbus::Result<()>;
+    /// Show a rendered 84-byte frame on the pad (see `tartarusd_core::lighting`). Ends after
+    /// [`PREVIEW_TIMEOUT_SECS`] unless renewed.
+    fn preview_frame(&self, frame: &[u8]) -> zbus::Result<()>;
+    /// Go back to the profile's own lighting.
+    fn clear_preview(&self) -> zbus::Result<()>;
 
     #[zbus(signal)]
     fn profile_changed(&self, name: String) -> zbus::Result<()>;

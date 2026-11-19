@@ -324,6 +324,7 @@ Methods:  ListProfiles() → as
           GetState() → (s profile, y mode, b pinned)
           SetMode(y)
           StartCapture() / StopCapture()
+          PreviewFrame(ay) / ClearPreview()
 Signals:  ProfileChanged(s)  ModeChanged(y)  ShiftChanged(b)  KeyCaptured(s physical_key)
 ```
 
@@ -339,6 +340,11 @@ fails fast. The typed client proxy lives in `crates/ipc`.
   every physical key-down, including the mode key, as `KeyCaptured`. It ends on
   `StopCapture` or on its own 30 s after the last `StartCapture`, so a crashed client
   can't leave the device dead.
+- **Preview** shows a client-rendered 84-byte frame on the pad (the same payload as
+  `setKeyRow`) so an editor can show lighting changes live without saving. While a preview
+  is active the profile's own frames wait; `ClearPreview`, or 20 s without a renewing
+  `PreviewFrame`, brings back the profile's current frame (or hands the pad back if the
+  profile has no lighting). A frame of the wrong size is rejected with `InvalidArgs`.
 - Signals are emitted from a separate task; the input path never waits on the bus.
 
 ## input-remapper importer (`core::import`)

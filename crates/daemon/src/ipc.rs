@@ -61,6 +61,14 @@ impl Service {
         ask(&self.cmds, Command::StopCapture).await
     }
 
+    async fn preview_frame(&self, frame: Vec<u8>) -> fdo::Result<()> {
+        invalid(ask(&self.cmds, |r| Command::PreviewFrame(frame, r)).await?)
+    }
+
+    async fn clear_preview(&self) -> fdo::Result<()> {
+        ask(&self.cmds, Command::ClearPreview).await
+    }
+
     #[zbus(signal)]
     async fn profile_changed(emitter: &SignalEmitter<'_>, name: String) -> zbus::Result<()>;
     #[zbus(signal)]

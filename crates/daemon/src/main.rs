@@ -219,6 +219,10 @@ async fn main() -> anyhow::Result<()> {
                 warn!("capture timed out; resuming remapping");
                 app.stop_capture();
             }
+            () = tokio::time::sleep_until(app.preview_deadline().unwrap_or_else(Instant::now)),
+                if app.preview_deadline().is_some() => {
+                app.stop_preview();
+            }
             Some(w) = win_rx.recv() => {
                 if let Err(err) = app.window_changed(w) {
                     break 'run Err(err);

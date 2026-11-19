@@ -52,6 +52,9 @@ pub enum Command {
     SetMode(u8, oneshot::Sender<Result<(), String>>),
     StartCapture(oneshot::Sender<()>),
     StopCapture(oneshot::Sender<()>),
+    /// Show this rendered frame on the pad until cleared or timed out.
+    PreviewFrame(Vec<u8>, oneshot::Sender<Result<(), String>>),
+    ClearPreview(oneshot::Sender<()>),
 }
 
 pub struct App<S: Sink> {
@@ -67,6 +70,8 @@ pub struct App<S: Sink> {
     /// Last window reported by a window source (none until one reports).
     window: Option<ActiveWindow>,
     capture_until: Option<Instant>,
+    /// While set, a client-supplied frame is on the pad and the profile's own frames wait.
+    preview_until: Option<Instant>,
 }
 
 impl<S: Sink> App<S> {
@@ -90,11 +95,16 @@ impl<S: Sink> App<S> {
             pinned: None,
             window: None,
             capture_until: None,
+            preview_until: None,
         }
     }
 
     pub fn capture_deadline(&self) -> Option<Instant> {
         self.capture_until
+    }
+
+    pub fn preview_deadline(&self) -> Option<Instant> {
+        self.preview_until
     }
 
     pub fn is_capturing(&self) -> bool {
@@ -115,7 +125,10 @@ impl<S: Sink> App<S> {
                     self.led_tx.send_replace(mask);
                 }
                 Effect::SetFrame(frame) => {
-                    self.frame_tx.send_replace(frame);
+                    // A preview owns the pad; the current frame returns when it ends.
+                    if self.preview_until.is_none() {
+                        self.frame_tx.send_replace(frame);
+                    }
                 }
                 Effect::ModeChanged(m) => {
                     info!(mode = m, "mode changed");
@@ -273,8 +286,35 @@ impl<S: Sink> App<S> {
                 self.stop_capture();
                 let _ = r.send(());
             }
+            Command::PreviewFrame(bytes, r) => {
+                let result = match Payload::try_from(bytes.as_slice()) {
+                    Ok(frame) => {
+                        self.preview_until =
+                            Some(now + Duration::from_secs(tartarusd_ipc::PREVIEW_TIMEOUT_SECS));
+                        self.frame_tx.send_replace(Some(Arc::new(frame)));
+                        Ok(())
+                    }
+                    Err(_) => Err(format!(
+                        "a frame is {} bytes, got {}",
+                        tartarusd_core::lighting::FRAME_LEN,
+                        bytes.len()
+                    )),
+                };
+                let _ = r.send(result);
+            }
+            Command::ClearPreview(r) => {
+                self.stop_preview();
+                let _ = r.send(());
+            }
         }
         Ok(())
+    }
+
+    /// End a preview and show what the profile says again.
+    pub fn stop_preview(&mut self) {
+        if self.preview_until.take().is_some() {
+            self.frame_tx.send_replace(self.machine.current_frame());
+        }
     }
 
     pub fn stop_capture(&mut self) {
@@ -739,6 +779,51 @@ mod tests {
             Ok(())
         );
         assert_eq!(first_cell(&f.frame), Some([255, 0, 0]));
+    }
+
+    #[test]
+    fn a_preview_replaces_the_pad_and_clearing_restores_the_profile() {
+        let mut f = fixture(&[("l.toml", lit("Lit", "KEY_1", "#ff0000"))], "Lit");
+        let mut frame = [0u8; tartarusd_core::lighting::FRAME_LEN];
+        frame[3..6].copy_from_slice(&[0, 255, 0]);
+        assert_eq!(
+            cmd(&mut f.app, |r| Command::PreviewFrame(frame.to_vec(), r)),
+            Ok(())
+        );
+        assert_eq!(first_cell(&f.frame), Some([0, 255, 0]));
+        assert!(f.app.preview_deadline().is_some());
+
+        // The profile changing underneath doesn't overwrite the preview.
+        cmd(&mut f.app, |r| Command::SetMode(1, r)).unwrap();
+        assert_eq!(first_cell(&f.frame), Some([0, 255, 0]));
+
+        // Clearing shows the profile's current frame (mode 1: dark).
+        cmd(&mut f.app, Command::ClearPreview);
+        assert_eq!(first_cell(&f.frame), Some([0, 0, 0]));
+        assert!(f.app.preview_deadline().is_none());
+    }
+
+    #[test]
+    fn a_preview_of_the_wrong_size_is_refused_and_a_timeout_clears_it() {
+        let mut f = fixture(&[("l.toml", lit("Lit", "KEY_1", "#ff0000"))], "Lit");
+        assert!(cmd(&mut f.app, |r| Command::PreviewFrame(vec![1, 2, 3], r)).is_err());
+        assert!(f.app.preview_deadline().is_none());
+        assert_eq!(first_cell(&f.frame), Some([255, 0, 0]));
+
+        let frame = vec![0u8; tartarusd_core::lighting::FRAME_LEN];
+        cmd(&mut f.app, |r| Command::PreviewFrame(frame, r)).unwrap();
+        f.app.stop_preview(); // what the daemon does when the deadline passes
+        assert_eq!(first_cell(&f.frame), Some([255, 0, 0]));
+    }
+
+    #[test]
+    fn clearing_a_preview_over_an_unlit_profile_hands_the_pad_back() {
+        let mut f = fixture(&[("p.toml", profile_text("Plain", "KEY_A"))], "Plain");
+        let frame = vec![0u8; tartarusd_core::lighting::FRAME_LEN];
+        cmd(&mut f.app, |r| Command::PreviewFrame(frame, r)).unwrap();
+        assert!(f.frame.borrow().is_some());
+        cmd(&mut f.app, Command::ClearPreview);
+        assert!(f.frame.borrow().is_none());
     }
 
     fn macro_fixture() -> Fixture {
