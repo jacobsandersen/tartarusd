@@ -81,6 +81,18 @@ Implications:
 - `matrix_effect_static` (3 bytes RGB) and `matrix_effect_none` work.
 - `matrix_brightness` reads/writes ASCII `0`–`255`.
 
+## OpenRazer D-Bus path (VERIFIED 2026-11-19, visually confirmed)
+
+- Bus `org.razer` (session). Device object `/org/razer/device/<serial>`; discover it
+  at runtime, never hard-code. Matrix dimensions via D-Bus: 4 rows x 6 cols.
+- `razer.device.lighting.chroma.setCustom()` once enters custom mode.
+- `setKeyRow(ay)` writes its payload verbatim in ONE write to `matrix_custom_frame`,
+  so the full 84-byte frame (4 rows x 21 bytes: row, 0, 5, 6 x RGB) goes in one call.
+  Two different full frames in a row switched with no blank flash and no reset.
+- `razer.device.lighting.profile_led` `set{Blue,Green,Red}LED(b)` / `get*LED()` drive
+  the profile LEDs independently (B+G together and R alone both confirmed on hardware).
+- `setNone()` restores the pad to effect `none`.
+
 ## Profile LED semantics
 
 - Three physically separate LEDs (blue, green, red), not a color-mixing RGB LED. Mixed

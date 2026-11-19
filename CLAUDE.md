@@ -34,8 +34,7 @@ Decisions (2026-11-19):
 
 - No kernel code. LEDs go through openrazer-daemon's D-Bus API (required). The sysfs
   attrs in docs/hardware.md document verified device behavior, not the runtime path.
-  The D-Bus custom-frame API is UNVERIFIED (no-reset live updates were proven via
-  sysfs): probe it read-only before writing lighting code.
+  The D-Bus frame and profile-LED paths are verified (see docs/hardware.md).
 - Open input devices via `/dev/input/by-id/usb-Razer_Razer_Tartarus_V2-*` and sysfs via
   glob `0003:1532:022B.*`; instance/event numbers are not stable.
 - Do not hard-code anything listed as unverified in docs/hardware.md.
