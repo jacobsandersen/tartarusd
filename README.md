@@ -200,7 +200,7 @@ tap_term_ms = 350            # what counts as quick
 ```
 
 With `mode_switch = "select"`, pressing the key still shows Hypershift, but **two quick
-taps** open a mode selection. The mode LED blinks, D-pad up and down choose a mode (the LED
+taps** open a mode selection. The mode LED blinks, D-pad up (next) and down (previous) choose a mode (the LED
 shows the choice), and one tap of the mode key picks it. If nothing is pressed for
 `select_timeout_ms` (default 4000), the selection is cancelled and the mode is unchanged.
 Other keys do nothing while it is open. It is not offered in a profile with one mode.

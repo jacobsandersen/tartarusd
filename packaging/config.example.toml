@@ -12,7 +12,7 @@ mode_key = "KEY_LEFTALT"
 #   "tap"         one quick tap cycles the mode; Hypershift starts when another key is
 #                 pressed, or after the key has been held for tap_term_ms.
 #   "select"      like "double_tap", but two quick taps open a selection: the mode LED
-#                 blinks, D-pad up/down choose a mode, and one tap of the mode key picks
+#                 blinks, D-pad up (next) and down (previous) choose a mode, and one tap of the mode key picks
 #                 it. With no input it is cancelled after select_timeout_ms.
 mode_switch = "double_tap"
 

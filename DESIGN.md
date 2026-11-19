@@ -230,7 +230,7 @@ tight in practice).
 Opt-in. Pressing and tapping work as in `double_tap`, but the second quick tap opens a
 **selection** instead of cycling:
 
-- The profile LED blinks the candidate mode (starting on the current one). D-pad up and
+- The profile LED blinks the candidate mode (starting on the current one). D-pad up (next) and
   down move the candidate (wrapping); the LED shows it. The real mode, bindings and
   lighting do not change yet.
 - One quick tap of the mode key picks the candidate. A hold does nothing.
