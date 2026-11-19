@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0](https://github.com/jacobsandersen/tartarusd/compare/v0.2.0...v0.3.0) (2026-11-19)
+
+
+### Features
+
+* **gui:** copy base lighting into Hypershift dimmed, brightness scaling, live hex ([8068506](https://github.com/jacobsandersen/tartarusd/commit/80685069d21e178a7036f1930c19be7751b91bbb))
+* **gui:** edit the action of several keys at once ([668280a](https://github.com/jacobsandersen/tartarusd/commit/668280aea710dafc0337b2f9c3b62f260f70baeb))
+
+
+### Bug Fixes
+
+* **gui:** choosing Key/chord or Macro no longer reverts to Not set ([06753b4](https://github.com/jacobsandersen/tartarusd/commit/06753b4e437457969e2d9a3950d7ba1cf4713748))
+
 ## [0.2.0](https://github.com/jacobsandersen/tartarusd/compare/v0.1.0...v0.2.0) (2026-11-19)
 
 
