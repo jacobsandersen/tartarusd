@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.0](https://github.com/jacobsandersen/tartarusd/compare/v0.3.0...v0.4.0) (2026-11-19)
+
+
+### Features
+
+* **gui:** settings dialog for the global config, with daemon restart ([42a90ea](https://github.com/jacobsandersen/tartarusd/commit/42a90ea1ca76d3084a6c0c875a2a05b4a814fd27))
+* **gui:** settings dialog for the global config, with daemon restart ([cb1e977](https://github.com/jacobsandersen/tartarusd/commit/cb1e9772cc15c57c05de776b594a34ecc286426f))
+* opt-in mode_switch = "select" for a timed mode picker ([bbf9cd8](https://github.com/jacobsandersen/tartarusd/commit/bbf9cd81c8403bf63c6e9fd29ceabfe2e2c5e6e5))
+* opt-in mode_switch = "select" for a timed mode picker ([b9766a7](https://github.com/jacobsandersen/tartarusd/commit/b9766a713d9fbbad264a405be3a3e8fa76ddc01c))
+
+
+### Bug Fixes
+
+* D-pad up selects the next mode in select mode ([86d1196](https://github.com/jacobsandersen/tartarusd/commit/86d1196cae86993b3925a16c71d3c41f5ac489f4))
+* D-pad up selects the next mode in select mode ([22cfad7](https://github.com/jacobsandersen/tartarusd/commit/22cfad7c6755880153d96d666deb41f540833714))
+
 ## [0.3.0](https://github.com/jacobsandersen/tartarusd/compare/v0.2.0...v0.3.0) (2026-11-19)
 
 
