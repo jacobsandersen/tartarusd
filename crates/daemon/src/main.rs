@@ -75,6 +75,7 @@ fn apply(
                 led_tx.send_replace(*mask);
             }
             Effect::ModeChanged(m) => info!(mode = m, "mode changed"),
+            Effect::ShiftChanged(on) => info!(shifted = on, "hypershift"),
             Effect::RunMacro(_) => warn!("macros are not implemented yet; ignoring"),
             Effect::Key { .. } | Effect::Wheel(_) => {}
         }

@@ -52,7 +52,10 @@ pub fn route(effects: &[Effect]) -> Batches {
                     sign * 120,
                 ));
             }
-            Effect::RunMacro(_) | Effect::SetLed(_) | Effect::ModeChanged(_) => {}
+            Effect::RunMacro(_)
+            | Effect::SetLed(_)
+            | Effect::ModeChanged(_)
+            | Effect::ShiftChanged(_) => {}
         }
     }
     b

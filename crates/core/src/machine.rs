@@ -38,6 +38,8 @@ pub enum Effect {
     SetLed(u8),
     /// The active mode changed (for D-Bus signals).
     ModeChanged(u8),
+    /// Hypershift was entered (`true`) or left (`false`). Emitted before any LED change.
+    ShiftChanged(bool),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -174,6 +176,7 @@ impl Machine {
                 }
             }
             ModeKeyState::Shifted => {
+                fx.push(Effect::ShiftChanged(false));
                 if self.cfg.hypershift_led_mask.is_some() {
                     fx.push(Effect::SetLed(self.led()));
                 }
@@ -188,6 +191,7 @@ impl Machine {
         }
         if matches!(self.mode_key, ModeKeyState::Pending(_)) {
             self.mode_key = ModeKeyState::Shifted;
+            fx.push(Effect::ShiftChanged(true));
             if self.cfg.hypershift_led_mask.is_some() {
                 fx.push(Effect::SetLed(self.led()));
             }
@@ -381,11 +385,17 @@ KEY_1 = "KEY_T"
     fn hold_plus_key_is_hypershift_and_keeps_mode() {
         let mut m = machine();
         press(&mut m, 0, "KEY_LEFTALT");
-        assert_eq!(press(&mut m, 10, "KEY_1"), vec![down("KEY_F1")]);
+        assert_eq!(
+            press(&mut m, 10, "KEY_1"),
+            vec![Effect::ShiftChanged(true), down("KEY_F1")]
+        );
         assert!(m.is_shifted());
         assert_eq!(release(&mut m, 20, "KEY_1"), vec![up("KEY_F1")]);
         // Releasing the mode key after a Hypershift use never changes the mode.
-        assert!(release(&mut m, 30, "KEY_LEFTALT").is_empty());
+        assert_eq!(
+            release(&mut m, 30, "KEY_LEFTALT"),
+            vec![Effect::ShiftChanged(false)]
+        );
         assert_eq!(m.mode(), 0);
         assert!(!m.is_shifted());
     }
@@ -414,7 +424,14 @@ KEY_1 = "KEY_T"
         let mut m = machine();
         press(&mut m, 0, "KEY_LEFTALT");
         let fx = press(&mut m, 10, "KEY_9");
-        assert_eq!(fx, vec![Effect::ModeChanged(2), Effect::SetLed(4)]);
+        assert_eq!(
+            fx,
+            vec![
+                Effect::ShiftChanged(true),
+                Effect::ModeChanged(2),
+                Effect::SetLed(4)
+            ]
+        );
         release(&mut m, 20, "KEY_9");
         release(&mut m, 30, "KEY_LEFTALT");
         assert_eq!(m.mode(), 2);
@@ -468,7 +485,11 @@ KEY_1 = "KEY_T"
         press(&mut m, 0, "KEY_LEFTALT");
         assert_eq!(
             press(&mut m, 1, "KEY_2"),
-            vec![down("KEY_LEFTCTRL"), down("KEY_C")]
+            vec![
+                Effect::ShiftChanged(true),
+                down("KEY_LEFTCTRL"),
+                down("KEY_C")
+            ]
         );
 
         let cfg = Config {
@@ -477,7 +498,10 @@ KEY_1 = "KEY_T"
         };
         let mut m = Machine::new(cfg, profile(PROFILE));
         press(&mut m, 0, "KEY_LEFTALT");
-        assert_eq!(press(&mut m, 1, "KEY_2"), vec![down("KEY_2")]);
+        assert_eq!(
+            press(&mut m, 1, "KEY_2"),
+            vec![Effect::ShiftChanged(true), down("KEY_2")]
+        );
     }
 
     #[test]
@@ -488,9 +512,15 @@ KEY_1 = "KEY_T"
         };
         let mut m = Machine::new(cfg, profile(PROFILE));
         press(&mut m, 0, "KEY_LEFTALT");
-        assert_eq!(press(&mut m, 1, "KEY_1")[0], Effect::SetLed(7));
+        assert_eq!(
+            press(&mut m, 1, "KEY_1")[..2],
+            [Effect::ShiftChanged(true), Effect::SetLed(7)]
+        );
         release(&mut m, 2, "KEY_1");
-        assert_eq!(release(&mut m, 3, "KEY_LEFTALT"), vec![Effect::SetLed(1)]);
+        assert_eq!(
+            release(&mut m, 3, "KEY_LEFTALT"),
+            vec![Effect::ShiftChanged(false), Effect::SetLed(1)]
+        );
     }
 
     #[test]
@@ -540,7 +570,24 @@ KEY_1 = "KEY_T"
         press(&mut m, 0, "KEY_LEFTALT");
         m.swap_profile(profile(PROFILE));
         // Still Pending, so another key commits to Hypershift.
-        assert_eq!(press(&mut m, 5, "KEY_1"), vec![down("KEY_F1")]);
+        assert_eq!(
+            press(&mut m, 5, "KEY_1"),
+            vec![Effect::ShiftChanged(true), down("KEY_F1")]
+        );
+    }
+
+    #[test]
+    fn shift_changed_only_on_real_hypershift() {
+        let mut m = machine();
+        // A plain tap or a long press never reports a shift.
+        press(&mut m, 0, "KEY_LEFTALT");
+        assert!(!release(&mut m, 50, "KEY_LEFTALT").contains(&Effect::ShiftChanged(false)));
+        // Auto-repeat of the mode key and a second shifted key report it once.
+        press(&mut m, 1000, "KEY_LEFTALT");
+        let a = press(&mut m, 1010, "KEY_1");
+        let b = press(&mut m, 1020, "KEY_2");
+        assert!(a.contains(&Effect::ShiftChanged(true)));
+        assert!(!b.contains(&Effect::ShiftChanged(true)));
     }
 
     struct Rng(u64);
