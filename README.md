@@ -42,8 +42,8 @@ cd packaging/arch && makepkg -si
 
 This builds `tartarusd-git` (daemon, CLI, user unit, udev rule) and `tartarusd-gui-git` (the
 editor) from this checkout's committed HEAD, so pacman tracks the files and can remove them.
-It needs `rustup` (the repo pins a nightly toolchain) and network access while building, so it
-doesn't work in a clean chroot. Hyprland window switching is built in; run
+It needs the `rust` package to build (pacman installs it as a build dependency; remove it
+afterwards if you like) and network access while building. Hyprland window switching is built in; run
 `TARTARUSD_FEATURES= makepkg -si` to leave it out. After installing, follow the notes pacman
 prints (re-plug the device, add a profile, `systemctl --user enable --now tartarusd`). The
 udev rule is installed by the package, so the `sudo install` step below isn't needed.

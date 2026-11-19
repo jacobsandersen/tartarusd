@@ -12,9 +12,9 @@
 # Window-based profile switching is built in for Hyprland. For a build without it:
 #   TARTARUSD_FEATURES= makepkg -si
 #
-# The repo pins a nightly Rust via rust-toolchain.toml, so this needs `rustup` (it downloads
-# the pinned toolchain on first use) and network access during prepare(); it will not build
-# in a clean chroot.
+# Builds with the stable `rust` package (a build dependency; remove it afterwards if you
+# like). The repo pins a nightly for development, which the package build does not need.
+# prepare() downloads crates, so it needs network access.
 
 pkgbase=tartarusd-git
 pkgname=(tartarusd-git tartarusd-gui-git)
@@ -25,7 +25,7 @@ arch=(x86_64)
 url='https://github.com/jacobsandersen/tartarusd'
 # No license has been chosen for the project yet; replace this once it is.
 license=(LicenseRef-TBD)
-makedepends=(git)
+makedepends=(git rust)
 source=("tartarusd::git+${TARTARUSD_SRC:-file://$startdir/../..}")
 sha256sums=(SKIP)
 
@@ -36,17 +36,17 @@ pkgver() {
   printf '0.1.0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
 }
 
+# Use the system toolchain even if a rustup proxy is earlier in PATH.
+_system_rust() { export PATH=/usr/bin:$PATH; }
+
 prepare() {
+  _system_rust
   cd tartarusd
-  if ! command -v rustup >/dev/null; then
-    error 'rustup is required: this project pins a nightly toolchain (rust-toolchain.toml)'
-    return 1
-  fi
-  # Installs the pinned toolchain if missing, then fetches dependencies.
   cargo fetch --locked
 }
 
 build() {
+  _system_rust
   cd tartarusd
   export CARGO_TARGET_DIR=target
   cargo build --release --frozen \
@@ -55,6 +55,7 @@ build() {
 }
 
 check() {
+  _system_rust
   cd tartarusd
   export CARGO_TARGET_DIR=target
   cargo test --frozen --workspace
