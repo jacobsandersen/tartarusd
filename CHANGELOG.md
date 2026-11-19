@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.0](https://github.com/jacobsandersen/tartarusd/compare/v0.1.0...v0.2.0) (2026-11-19)
+
+
+### Features
+
+* **daemon:** preview a lighting frame over D-Bus ([02d3ee9](https://github.com/jacobsandersen/tartarusd/commit/02d3ee9cff355e95372e1c5cde89399ebb1b0706))
+* firmware lighting effects per mode and Hypershift layer ([537d78e](https://github.com/jacobsandersen/tartarusd/commit/537d78edc685fb800fe09bdf059a3f79eade0f4e))
+* **gui:** live color editing with multi-select, copy/paste and pad preview ([2d32b59](https://github.com/jacobsandersen/tartarusd/commit/2d32b59a7fe52a1f9ff7eb48736a908ee827c8ee))
+
+
+### Bug Fixes
+
+* **tools:** pass speed last in the effect probe, add speed comparisons ([2f0bbea](https://github.com/jacobsandersen/tartarusd/commit/2f0bbea7d48460a9c4c1a2451470c67b3d391a4d))
+
 ## 0.1.0 (2026-11-19)
 
 
