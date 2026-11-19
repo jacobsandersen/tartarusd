@@ -187,10 +187,44 @@ thread, so macros are deterministic under test and cancellation is trivial.
   tick time, so a stall never produces a burst of back-to-back steps.
 - Not supported yet: repeat-while-held, and macros that run another action.
 
-## Mode key: tap = next mode, hold = Hypershift
+## Mode key: Hypershift and mode switching
 
-One physical key (`KEY_LEFTALT`, the hyper/mode key) does both jobs, decided by
-**tap vs hold** (QMK "hold on other key press" semantics):
+One physical key (`KEY_LEFTALT`, the hyper/mode key) both shifts into the Hypershift layer
+and switches modes. Which gesture switches modes is a global option, `mode_switch`:
+
+| `mode_switch` | Press | Switch modes |
+|---|---|---|
+| `double_tap` (default) | shows Hypershift immediately | two quick taps in a row |
+| `tap` | undecided until another input or `tap_term` | one quick tap |
+
+Either way the mode key never emits anything itself, and neither gesture adds latency
+to other keys. "Quick" means shorter than `tap_term` (default 350 ms; 200 ms proved too
+tight in practice).
+
+### `double_tap` (default): Hypershift first
+
+```
+                       press
+  Idle ───────────────────────────► Shifted   (Hypershift layer active at once;
+   ▲                                   │        LED, lighting and ShiftChanged follow)
+   │                                   │ release
+   │      quick press (< tap_term)     ▼
+   │      with nothing else pressed    ├─ first tap ──► Idle, armed for tap_term
+   │                                   ├─ second tap, within tap_term of the first
+   │                                   │     ──► Idle, NextMode (+ LED, lighting)
+   └───────────────────────────────────┴─ anything else (held long, another input
+                                           during the hold) ──► Idle, nothing armed
+```
+
+- Pressing the key shows Hypershift immediately, so a hold needs no timer. A single tap
+  therefore flashes Hypershift for as long as the key is down, and changes nothing else.
+- A double tap needs **two consecutive taps**: each shorter than `tap_term`, with the gap
+  between them (release to next press) also shorter than `tap_term`, and with no other
+  input in between or during either tap. Any other input cancels it.
+- Pressing another key while the mode key is down is an ordinary Hypershift use and
+  arms nothing.
+
+### `tap`: mode switch first
 
 ```
             mode key ↓
@@ -208,16 +242,17 @@ One physical key (`KEY_LEFTALT`, the hyper/mode key) does both jobs, decided by
    └──────────┴───────────────┘
 ```
 
-- The mode key never emits anything itself, so the decision costs **zero latency**:
-  the first other input while held commits to Hypershift immediately, and a tap is
-  decided on release.
+- The first other input while held commits to Hypershift immediately; a tap is decided on
+  release.
 - A hold also commits **by time**: once the key has been held for `tap_term` with
   nothing else pressed, a timer promotes it to Hypershift, so the LED, lighting and
   `ShiftChanged` signal show it without needing another key. Releasing a promoted hold
   never changes the mode. (A short tap can't flicker into Hypershift, because promotion
   only happens after `tap_term`.)
-- `tap_term` (default 350 ms; 200 ms proved too tight in practice) is the boundary:
-  released **before** it is a tap, at or after it is a hold.
+- `tap_term` is the boundary: released **before** it is a tap, at or after it is a hold.
+
+### Both gestures
+
 - Hypershift **never changes `mode`** and never touches the mode LED state; it
   reads `modes[mode].hypershift`.
 - Unmapped keys in the Hypershift layer fall through to `modes[mode].bindings`
@@ -233,6 +268,7 @@ Global config:
 
 ```toml
 mode_key = "KEY_LEFTALT"
+mode_switch = "double_tap"   # or "tap"
 tap_term_ms = 350
 hypershift_fallthrough = true
 # hypershift_led_mask = 7

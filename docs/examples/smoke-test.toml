@@ -1,6 +1,7 @@
 # Obvious, harmless bindings for a first live run. Press 01 in a terminal or text
 # field and watch which letter appears:
-#   mode 1 (blue LED): a    tap the mode key -> mode 2 (green): b    -> mode 3 (red): c
+#   mode 1 (blue LED): a    double-tap the mode key -> mode 2 (green): b    -> mode 3 (red): c
+#   (the default `mode_switch = "double_tap"`; with `mode_switch = "tap"` a single tap cycles)
 # Hold the mode key and press 01: x (Hypershift, mode unchanged).
 # Key 02 types "hi" as a macro (h, then i 100 ms later), in every mode where it is
 # bound (mode 1 only here).

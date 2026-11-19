@@ -1,9 +1,9 @@
 # tartarusd
 
 Rust workspace: userspace remapping daemon + CLI + GTK4 GUI for the Razer Tartarus V2
-on Linux (any desktop environment). Restores Synapse-style keymaps: tapping the hyper/mode key cycles
-up to 7 modes (profile LEDs show the mode), holding it shifts into a per-mode
-Hypershift layer without changing mode. Each mode and Hypershift layer has its own
+on Linux (any desktop environment). Restores Synapse-style keymaps: the hyper/mode key shifts into a per-mode
+Hypershift layer without changing mode, and double-tapping it (or single-tapping, per
+`mode_switch`) cycles up to 7 modes (profile LEDs show the mode). Each mode and Hypershift layer has its own
 per-key lighting. Bindings are organized as per-game profiles, with optional
 automatic switching by active window (Hyprland support is an opt-in cargo feature).
 Replaces input-remapper for this device.
@@ -45,7 +45,9 @@ Decisions (2026-11-19):
 - `crates/core` must stay free of I/O.
 - Key-release invariant: release what was pressed (`held[code]`), never re-look-up
   the current mode's table on key-up.
-- Mode key never emits output; tap/hold is decided lazily (no added latency).
+- Mode key never emits output. Two gestures, chosen by `mode_switch`: `double_tap`
+  (default: Hypershift on press, two quick taps cycle modes) or `tap` (a single tap cycles;
+  Hypershift on the next input or after `tap_term`). Neither adds latency to other keys.
 - Lighting writes never block the input path (separate task, latest-wins channel).
 - Profile TOML files are the single source of truth; the GUI writes files atomically,
   the daemon reloads them.
