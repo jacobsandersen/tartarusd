@@ -168,7 +168,7 @@ One physical key (`KEY_LEFTALT`, the hyper/mode key) does both jobs, decided by
 - The mode key never emits anything itself, so the decision is lazy and costs
   **zero latency**: the first other input while held commits to Hypershift
   immediately; tap is decided on release.
-- `tap_term` (default ~200 ms) only separates a deliberate tap from a long
+- `tap_term` (default 350 ms; 200 ms proved too tight in practice) only separates a deliberate tap from a long
   press-and-release with no other key (cancel).
 - Hypershift **never changes `mode`** and never touches the mode LED state; it
   reads `modes[mode].hypershift`.
@@ -185,7 +185,7 @@ Global config:
 
 ```toml
 mode_key = "KEY_LEFTALT"
-tap_term_ms = 200
+tap_term_ms = 350
 hypershift_fallthrough = true
 # hypershift_led_mask = 7
 ```

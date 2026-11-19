@@ -367,13 +367,14 @@ KEY_1 = "KEY_T"
 
     #[test]
     fn long_press_with_no_other_input_is_a_noop() {
+        let term = Config::default().tap_term.as_millis() as u64;
         let mut m = machine();
         press(&mut m, 0, "KEY_LEFTALT");
-        assert!(release(&mut m, 201, "KEY_LEFTALT").is_empty());
+        assert!(release(&mut m, term + 1, "KEY_LEFTALT").is_empty());
         assert_eq!(m.mode(), 0);
         // Exactly tap_term counts as a tap.
-        press(&mut m, 1000, "KEY_LEFTALT");
-        assert!(!release(&mut m, 1200, "KEY_LEFTALT").is_empty());
+        press(&mut m, 10_000, "KEY_LEFTALT");
+        assert!(!release(&mut m, 10_000 + term, "KEY_LEFTALT").is_empty());
     }
 
     #[test]

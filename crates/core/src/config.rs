@@ -22,7 +22,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             mode_key: Key::LEFTALT,
-            tap_term: Duration::from_millis(200),
+            tap_term: Duration::from_millis(350),
             hypershift_fallthrough: true,
             hypershift_led_mask: None,
             default_profile: None,
