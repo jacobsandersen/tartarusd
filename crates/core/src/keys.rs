@@ -33,6 +33,11 @@ impl Key {
         tables().0.get(name).copied().map(Key)
     }
 
+    /// Every known key with its canonical name (`KEY_*` and `BTN_*`).
+    pub fn all_named() -> impl Iterator<Item = (Key, &'static str)> {
+        KEY_TABLE.iter().map(|&(name, code)| (Key(code), name))
+    }
+
     /// Canonical name, if the code is known.
     pub fn name(self) -> Option<&'static str> {
         tables().1.get(&self.0).copied()
