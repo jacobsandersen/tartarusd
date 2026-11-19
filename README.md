@@ -17,8 +17,9 @@ It replaces input-remapper for this device. It runs as a `systemd --user` servic
 root and no kernel code, on any desktop environment. Window-based profile switching is an
 opt-in build feature (Hyprland is the first supported compositor).
 
-> **Status:** the daemon, CLI, profiles, lighting, macros and the input-remapper importer are
-> working. The GTK GUI is not built yet; profiles are edited by hand.
+> **Status:** the daemon, CLI, profiles, lighting, macros, the input-remapper importer and
+> the GTK4 profile editor are working. The editor is new and has had little hands-on testing;
+> profiles can always be edited by hand.
 
 ## Requirements
 
@@ -29,12 +30,14 @@ opt-in build feature (Hyprland is the first supported compositor).
 - Access to `/dev/uinput` and the Tartarus input nodes for your user (the udev rule below).
 - Rust nightly to build (pinned in `rust-toolchain.toml`; `rustup` fetches it).
 - `systemd --user` if you want to run it as a service (optional).
+- GTK4 and libadwaita development packages, only if you build the editor (`--gui`).
 
 ## Install
 
 ```sh
 packaging/install.sh                       # build and install to ~/.local
 packaging/install.sh --features hyprland   # ...with Hyprland window-based switching
+packaging/install.sh --gui                 # ...and the GTK4 profile editor
 ```
 
 This installs `tartarusd` and `tartarusctl` to `~/.local/bin`, the user unit to
@@ -123,6 +126,21 @@ The full format, the rules for each field, and the design behind them are in
 [DESIGN.md](DESIGN.md). Verified hardware facts (key codes, LED matrix) are in
 [docs/hardware.md](docs/hardware.md).
 
+## The editor
+
+`tartarusd-gui` (installed with `--gui`, launcher "Tartarus Profiles") edits the same profile
+files without hand-editing: pick a profile, pick a mode, click a key on the drawn pad and choose
+what it does (a key or chord you can record from the keyboard, a macro, switch mode, disable).
+The **Hypershift** toggle edits the layer used while the mode key is held, and the **Lighting**
+view paints per-key colors for each mode and layer. Mode tabs, profile LEDs, match rules,
+new/delete and **Import input-remapper preset** are all there. **Save** (Ctrl+S) writes the
+file atomically and the daemon reloads it.
+
+It works without the daemon. When the daemon is running it also shows the active profile and
+mode, can pin a profile (menu), and **Identify key on pad** selects the key you press on the
+Tartarus. Not there yet: a "use the current window" button for match rules, and per-key colors
+for the D-pad and wheel directions (they have no LED).
+
 ## Migrating from input-remapper
 
 ```sh
@@ -136,7 +154,7 @@ input-remapper macro syntax, key combinations, unknown symbols) is listed as a w
 stderr and skipped, never guessed, so fix those by hand in the result. Letters and keysym
 names are read as a US layout. Without `--out` the profile goes to stdout. With `--modes 2`
 or `3`, the extra modes start empty (keys pass through). Check the result with
-`tartarusctl validate`.
+`tartarusctl validate`. The editor's import does the same conversion.
 
 ## The mode key
 

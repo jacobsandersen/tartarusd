@@ -16,12 +16,14 @@ Replaces input-remapper for this device.
 
 Done: hardware discovery (0), `core` (1), daemon MVP (2), profile directory + live reload
 (3), D-Bus + CLI (4), window-based switching behind the opt-in `hyprland` feature (5),
-macros + Hypershift (6), per-key lighting (6b), input-remapper importer (8), packaging +
-README (9). The mode key supports
+macros + Hypershift (6), per-key lighting (6b), GTK editor (7), input-remapper importer (8),
+packaging + README (9). The mode key supports
 two gestures (`mode_switch`, default `double_tap`).
 
-Remaining: the GTK GUI (7), on the backlog for now. The GUI should reuse `core::import`
-and `Profile::to_toml` for importing and saving. Everything above has unit tests; most of it
+All initial milestones are done. The GUI (`crates/gui`, plain gtk4-rs + libadwaita, not relm4)
+is built and screenshot-checked, but its click-through behavior has not been exercised on a
+real session end to end; verify before claiming it works. Pure editor logic (`edit`, `store`,
+`text`, `layout`) is unit tested; widgets are not. Everything else has unit tests; most of it
 has been run on the real device by the user, but verify before claiming hardware behavior
 (see docs/hardware.md for what is confirmed).
 

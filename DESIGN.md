@@ -366,7 +366,14 @@ daemon needed), `import <preset.json>` (offline; see the importer section), and 
 
 ## GUI (`crates/gui`)
 
-- Toolkit: `gtk4-rs` + libadwaita via `relm4` (default choice; `slint`/`iced` acceptable).
+- Toolkit: plain `gtk4-rs` + libadwaita (decided at implementation; `relm4` was the earlier
+  default, but the editor is one window rebuilt from a single state struct, so a framework
+  added little). No async runtime: D-Bus calls (zbus) are awaited on the GLib main loop.
+- Structure: pure, tested modules (`edit` operations on `Profile`, `store` for the profiles
+  directory, `text` for chord/macro text, `layout` for the drawn pad) under a thin `ui`
+  layer. The profile file is written with `Profile::to_toml` after a load round-trip check.
+- Works without the daemon (files only). Daemon features (status, pin, key capture) are
+  polled every 2 s and disabled when it is absent.
 - Visual Tartarus layout; mode tabs (blue/green/red); profile list sidebar.
 - Click key → choose binding: record chord (captured from the regular keyboard via
   GTK, fine because only the Tartarus is grabbed), macro editor, or mode action.
@@ -374,7 +381,7 @@ daemon needed), `import <preset.json>` (offline; see the importer section), and 
 - Profile editor for match rules with a "use current window" button (available only when a window-source backend,
   e.g. `hyprland`, is compiled in).
 - Import from input-remapper presets → `mode.0` of a new profile. (The conversion itself
-  is `tartarusctl import` / `core::import`; the GUI will just call it.)
+  is `tartarusctl import` / `core::import`; the GUI calls it.)
 
 ## Workspace layout
 
@@ -384,7 +391,7 @@ crates/
   core/    # model, serde, validation, input-remapper importer — NO I/O
   daemon/  # evdev, uinput, zbus server; window sources behind cargo features (hyprland)
   cli/     # tartarusctl
-  gui/     # relm4 app, zbus client
+  gui/     # gtk4 + libadwaita editor, zbus client
 packaging/
   70-tartarusd.rules      # udev (uaccess)
   tartarusd.service       # systemd --user unit
@@ -408,7 +415,8 @@ Key crates: `evdev` (read + uinput `VirtualDevice`), `zbus`, `serde` + `toml`,
 5. **Window sources + opt-in `hyprland` feature** (auto-switch). Done.
 6. **Macros + hypershift layer.** Done (Hypershift landed with the core state machine).
 6b. **Per-key lighting** — frames per mode and per Hypershift layer. Done.
-7. **GUI** (incl. per-key color editing on the same layout widget).
+7. **GUI** (incl. per-key color editing on the same layout widget). Done, except the
+   "use current window" button for match rules.
 8. **input-remapper importer.** Done: `core::import` + `tartarusctl import`.
 9. **Packaging** — udev rule, systemd user unit, installer, README. Done.
 
