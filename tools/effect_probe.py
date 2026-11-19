@@ -54,17 +54,20 @@ def readback(path: str) -> str:
 
 
 # (label, method, signature, values, note)
+# Argument order is from OpenRazer's own endpoints: colors first, speed LAST.
 STEPS = [
     ("static red", "setStatic", "yyy", (255, 0, 0), ""),
     ("spectrum (rainbow cycle)", "setSpectrum", "", (), ""),
     ("wave, direction 1", "setWave", "i", (1,), "which way does it travel?"),
     ("wave, direction 2", "setWave", "i", (2,), "the opposite way?"),
     ("breathing, single cyan", "setBreathSingle", "yyy", (0, 255, 255), ""),
-    ("breathing, dual red/blue", "setBreathDual", "yyyyyy", (255, 0, 0, 0, 0, 255), ""),
+    ("breathing, dual red/blue", "setBreathDual", "yyyyyy", (255, 0, 0, 0, 0, 255), "red then blue?"),
     ("breathing, random", "setBreathRandom", "", (), ""),
-    ("reactive, speed 2, green", "setReactive", "yyyy", (2, 0, 255, 0), "PRESS KEYS on the pad now"),
-    ("starlight single, speed 2, magenta", "setStarlightSingle", "yyyy", (2, 255, 0, 255), ""),
-    ("starlight dual, speed 2, red/blue", "setStarlightDual", "yyyyyyy", (2, 255, 0, 0, 0, 0, 255), ""),
+    ("reactive RED, speed 1", "setReactive", "yyyy", (255, 0, 0, 1), "PRESS KEYS: color? how long does the glow last?"),
+    ("reactive RED, speed 4", "setReactive", "yyyy", (255, 0, 0, 4), "PRESS KEYS: longer or shorter than speed 1?"),
+    ("starlight single MAGENTA, speed 1", "setStarlightSingle", "yyyy", (255, 0, 255, 1), "color? twinkle rate?"),
+    ("starlight single MAGENTA, speed 3", "setStarlightSingle", "yyyy", (255, 0, 255, 3), "faster or slower than speed 1?"),
+    ("starlight dual red/blue, speed 2", "setStarlightDual", "yyyyyyy", (255, 0, 0, 0, 0, 255, 2), "red and blue?"),
     ("starlight random, speed 2", "setStarlightRandom", "y", (2,), ""),
     ("none (all off)", "setNone", "", (), ""),
 ]
