@@ -77,6 +77,8 @@ anything. Then:
    journalctl --user -u tartarusd -f      # logs
    ```
 
+To remove a manual install: `packaging/uninstall.sh` (keeps `~/.config/tartarusd`).
+
 ### Try it first, safely
 
 Before enabling the service, run it in the foreground with a built-in time limit. It
