@@ -442,10 +442,11 @@ impl Machine {
                 }
             }
             Event::Press(k) => {
+                // Up goes to the next mode, down to the previous one.
                 let step = if k == PhysicalKey::Key(Key::UP) {
-                    n - 1
-                } else if k == PhysicalKey::Key(Key::DOWN) {
                     1
+                } else if k == PhysicalKey::Key(Key::DOWN) {
+                    n - 1
                 } else {
                     return;
                 };
@@ -1338,12 +1339,12 @@ type = "spectrum"
     fn select_dpad_moves_the_candidate_and_a_tap_picks_it() {
         let mut m = select_machine();
         open_select(&mut m, 0);
-        assert_eq!(press(&mut m, 300, "KEY_DOWN"), vec![Effect::SetLed(2)]);
-        release(&mut m, 310, "KEY_DOWN");
-        assert_eq!(press(&mut m, 400, "KEY_DOWN"), vec![Effect::SetLed(4)]);
+        assert_eq!(press(&mut m, 300, "KEY_UP"), vec![Effect::SetLed(2)]);
+        release(&mut m, 310, "KEY_UP");
+        assert_eq!(press(&mut m, 400, "KEY_UP"), vec![Effect::SetLed(4)]);
         // Wraps both ways.
-        assert_eq!(press(&mut m, 500, "KEY_DOWN"), vec![Effect::SetLed(1)]);
-        assert_eq!(press(&mut m, 600, "KEY_UP"), vec![Effect::SetLed(4)]);
+        assert_eq!(press(&mut m, 500, "KEY_UP"), vec![Effect::SetLed(1)]);
+        assert_eq!(press(&mut m, 600, "KEY_DOWN"), vec![Effect::SetLed(4)]);
         assert_eq!(m.mode(), 0, "nothing changes until the pick");
         assert_eq!(press(&mut m, 700, "KEY_LEFTALT"), vec![]);
         assert_eq!(
