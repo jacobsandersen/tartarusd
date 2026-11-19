@@ -1,0 +1,4 @@
+# Give the logged-in seat user access to the Tartarus V2 input nodes and /dev/uinput,
+# so tartarusd runs as a systemd --user service without root.
+SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_VENDOR_ID}=="1532", ENV{ID_MODEL_ID}=="022b", TAG+="uaccess"
+KERNEL=="uinput", SUBSYSTEM=="misc", OPTIONS+="static_node=uinput", TAG+="uaccess"

@@ -1,0 +1,14 @@
+[Unit]
+Description=Razer Tartarus V2 remapping daemon
+Documentation=https://github.com/jacobsandersen/tartarusd
+# OpenRazer is required: LEDs go through its D-Bus API.
+Wants=openrazer-daemon.service
+After=openrazer-daemon.service
+
+[Service]
+ExecStart=%h/.local/bin/tartarusd
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
