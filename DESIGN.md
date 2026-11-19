@@ -234,17 +234,14 @@ hypershift_fallthrough = true
 
 ## Per-key lighting (per mode, per Hypershift layer)
 
-Each mode carries a static RGB frame; each mode's Hypershift layer may carry its
-own frame. The daemon swaps frames on mode change and on Hypershift enter/exit.
+Each mode may carry a static RGB frame, and its Hypershift layer may carry its own. The
+state machine emits the frame to show whenever it can change: mode change, Hypershift
+enter/exit, profile swap.
 
 ```
-Mode { led_mask, bindings, hypershift,
-       lighting: Frame, hypershift_lighting: Option<Frame> }
-Frame { default: Rgb, keys: Map<PhysicalKey, Rgb> }   // rendered to the matrix
-LedMap: PhysicalKey → (row, col)                       // hardware constant, from discovery
+Mode  { ..., lighting: Option<Frame>, hypershift_lighting: Option<Frame> }
+Frame { default: Rgb, keys: Map<Key, Rgb> }   // keys that have an LED
 ```
-
-TOML:
 
 ```toml
 [mode.0.lighting]
@@ -256,20 +253,25 @@ default = "#101010"
 KEY_1 = "#ff0000"
 ```
 
-- Output path: OpenRazer kernel driver sysfs — `matrix_custom_frame` (per row:
-  `row, start_col, end_col, RGB…`, one `write(2)` per row) then `matrix_effect_custom`.
-  The OpenRazer Python client is not installed on the target; if `openrazer-daemon`
-  is running, detect it and use its D-Bus custom-frame API instead so it doesn't
-  overwrite state.
-- Cell map discovery tool: `tools/led_probe.py`.
-- Lighting writes run on a separate task fed by a latest-wins channel (`tokio::sync::watch`):
-  the input path never waits on USB, and rapid Hypershift taps coalesce into the final frame.
-- Always write the **full frame** (all 4 rows × 6 cols concatenated, one `write(2)`,
-  84 bytes) then apply. Partial frames are unreliable; see `docs/hardware.md`.
+- **Which keys:** the 21 keys with LEDs (01-20 and the wheel). The wheel's LED is
+  `BTN_MIDDLE`; the D-pad and the mode key have none and are rejected at load, as are
+  unknown keys and anything that is not `#rrggbb`. The cell map is a hardware constant
+  in `core` (`lighting::cell`), taken from `docs/hardware.md`.
+- **Opt-in per profile:** a profile with no `lighting` anywhere never touches the matrix.
+  Once a profile defines any frame, it owns the pad: a mode with no frame of its own
+  shows a dark one. Hypershift without a `hypershift_lighting` keeps the mode's frame.
+- **Handing the pad back:** switching to a profile with no lighting, and daemon shutdown,
+  call OpenRazer's `restoreLastEffect` (documented for exactly this: applications that
+  use custom frames, after they exit) so the pad returns to the effect you configured.
+- **Output path:** OpenRazer D-Bus only. `setCustom` once, then each frame is one
+  `setKeyRow` call carrying the full 84 bytes (4 rows x `row, 0, 5, 6 x RGB`); no reset
+  or blanking between frames (verified, `docs/hardware.md`). Identical consecutive frames
+  are not rewritten.
+- **Never blocks input:** frames go to a separate task over a latest-wins `watch`
+  channel, so rapid Hypershift taps coalesce into the final frame. A failed write forgets
+  the believed pad state, so the next frame re-enters custom mode and rewrites in full.
 - Static frames only in v1; firmware effects (wave/reactive/etc.) per mode can come later
   as an enum delegating to OpenRazer.
-- Matrix dimensions and the `PhysicalKey → (row, col)` map are verified in Milestone 0
-  (light one cell at a time, record which key lights).
 
 ## D-Bus interface (`org.tartarusd.Daemon1`, session bus, `zbus`)
 
@@ -344,7 +346,7 @@ Key crates: `evdev` (read + uinput `VirtualDevice`), `zbus`, `serde` + `toml`,
 4. **D-Bus + CLI.**
 5. **Window sources + opt-in `hyprland` feature** (auto-switch). Done.
 6. **Macros + hypershift layer.** Done (Hypershift landed with the core state machine).
-6b. **Per-key lighting** — frames per mode and per Hypershift layer.
+6b. **Per-key lighting** — frames per mode and per Hypershift layer. Done.
 7. **GUI** (incl. per-key color editing on the same layout widget).
 8. **input-remapper importer.**
 9. **Packaging** — udev rule, systemd user unit, README.

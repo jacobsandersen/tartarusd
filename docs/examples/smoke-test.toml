@@ -4,6 +4,8 @@
 # Hold the mode key and press 01: x (Hypershift, mode unchanged).
 # Key 02 types "hi" as a macro (h, then i 100 ms later), in every mode where it is
 # bound (mode 1 only here).
+# Lighting is defined for mode 1 only: mode 2 and 3 go dark, because a profile with any
+# lighting owns the pad.
 # Everything else passes through unchanged; the wheel scrolls as normal except mode 1,
 # where it sends PageUp/PageDown.
 name = "Smoke test"
@@ -16,6 +18,16 @@ WHEEL_DOWN = "KEY_PAGEDOWN"
 
 [mode.0.hypershift]
 KEY_1 = "KEY_X"
+
+# Lighting: the keys bound above glow, and Hypershift dims the rest and lights 01 red.
+[mode.0.lighting]
+default = "#000000"
+KEY_1 = "#00ffff"
+KEY_2 = "#00ffff"
+
+[mode.0.hypershift_lighting]
+default = "#101010"
+KEY_1 = "#ff0000"
 
 [mode.1]
 KEY_1 = "KEY_B"

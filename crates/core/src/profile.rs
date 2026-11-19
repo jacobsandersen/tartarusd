@@ -467,6 +467,7 @@ led_mask = 2
         let p = Profile::from_toml(include_str!("../../../docs/examples/smoke-test.toml")).unwrap();
         assert_eq!(p.modes.len(), 3);
         assert!(p.modes[0].hypershift.is_some());
+        assert!(p.uses_lighting(), "the example demonstrates lighting");
     }
 
     fn win(class: &str, title: &str) -> ActiveWindow {
