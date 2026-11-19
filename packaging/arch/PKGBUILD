@@ -1,0 +1,98 @@
+# Maintainer: Jacob Andersen
+#
+# Builds tartarusd from this repository so pacman can manage it:
+#
+#   cd packaging/arch && makepkg -si
+#
+# Two packages come out of one build: tartarusd-git (daemon, CLI, systemd user unit, udev
+# rule) and tartarusd-gui-git (the GTK4 profile editor).
+#
+# Source: the checkout this file lives in (committed HEAD only). To build from GitHub instead:
+#   TARTARUSD_SRC=https://github.com/jacobsandersen/tartarusd.git makepkg -si
+# Window-based profile switching is built in for Hyprland. For a build without it:
+#   TARTARUSD_FEATURES= makepkg -si
+#
+# The repo pins a nightly Rust via rust-toolchain.toml, so this needs `rustup` (it downloads
+# the pinned toolchain on first use) and network access during prepare(); it will not build
+# in a clean chroot.
+
+pkgbase=tartarusd-git
+pkgname=(tartarusd-git tartarusd-gui-git)
+pkgver=0.1.0.r0.g0000000
+pkgrel=1
+pkgdesc='Userspace keymap daemon for the Razer Tartarus V2: modes, Hypershift, per-key lighting'
+arch=(x86_64)
+url='https://github.com/jacobsandersen/tartarusd'
+# No license has been chosen for the project yet; replace this once it is.
+license=(LicenseRef-TBD)
+makedepends=(git)
+source=("tartarusd::git+${TARTARUSD_SRC:-file://$startdir/../..}")
+sha256sums=(SKIP)
+
+_features=${TARTARUSD_FEATURES-hyprland}
+
+pkgver() {
+  cd tartarusd
+  printf '0.1.0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+prepare() {
+  cd tartarusd
+  if ! command -v rustup >/dev/null; then
+    error 'rustup is required: this project pins a nightly toolchain (rust-toolchain.toml)'
+    return 1
+  fi
+  # Installs the pinned toolchain if missing, then fetches dependencies.
+  cargo fetch --locked
+}
+
+build() {
+  cd tartarusd
+  export CARGO_TARGET_DIR=target
+  cargo build --release --frozen \
+    -p tartarusd -p tartarusctl -p tartarusd-gui \
+    ${_features:+--features "tartarusd/$_features"}
+}
+
+check() {
+  cd tartarusd
+  export CARGO_TARGET_DIR=target
+  cargo test --frozen --workspace
+}
+
+package_tartarusd-git() {
+  pkgdesc='Razer Tartarus V2 keymap daemon and CLI (modes, Hypershift, per-key lighting)'
+  depends=(glibc gcc-libs openrazer-daemon)
+  optdepends=('tartarusd-gui-git: graphical profile editor'
+              'hyprland: window-based profile switching')
+  provides=(tartarusd)
+  conflicts=(tartarusd)
+  install=tartarusd.install
+
+  cd tartarusd
+  install -Dm755 target/release/tartarusd "$pkgdir/usr/bin/tartarusd"
+  install -Dm755 target/release/tartarusctl "$pkgdir/usr/bin/tartarusctl"
+
+  # The unit in the repo targets a ~/.local install; point it at /usr/bin.
+  sed 's|^ExecStart=.*|ExecStart=/usr/bin/tartarusd|' packaging/tartarusd.service |
+    install -Dm644 /dev/stdin "$pkgdir/usr/lib/systemd/user/tartarusd.service"
+  install -Dm644 packaging/70-tartarusd.rules "$pkgdir/usr/lib/udev/rules.d/70-tartarusd.rules"
+
+  install -Dm644 packaging/config.example.toml "$pkgdir/usr/share/doc/tartarusd/config.example.toml"
+  install -Dm644 docs/examples/smoke-test.toml "$pkgdir/usr/share/doc/tartarusd/examples/smoke-test.toml"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/tartarusd/README.md"
+  install -Dm644 DESIGN.md "$pkgdir/usr/share/doc/tartarusd/DESIGN.md"
+}
+
+package_tartarusd-gui-git() {
+  pkgdesc='GTK4 profile editor for tartarusd (Razer Tartarus V2)'
+  depends=(glibc gcc-libs gtk4 libadwaita)
+  optdepends=('tartarusd-git: live status, pinning and key identification')
+  provides=(tartarusd-gui)
+  conflicts=(tartarusd-gui)
+
+  cd tartarusd
+  install -Dm755 target/release/tartarusd-gui "$pkgdir/usr/bin/tartarusd-gui"
+  sed 's|^Exec=.*|Exec=/usr/bin/tartarusd-gui|' packaging/tartarusd-gui.desktop |
+    install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/org.tartarusd.Gui.desktop"
+}

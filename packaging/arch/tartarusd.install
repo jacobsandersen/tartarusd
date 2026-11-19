@@ -1,0 +1,17 @@
+post_install() {
+  cat <<'MSG'
+==> tartarusd needs a little setup that pacman can't do for you:
+    1. Re-plug the Tartarus (or run: sudo udevadm trigger --subsystem-match=input --subsystem-match=misc)
+       so the new udev rule grants your user access to it and to /dev/uinput.
+    2. Put a profile in ~/.config/tartarusd/profiles/ (the editor, tartarusd-gui, can create one,
+       or see /usr/share/doc/tartarusd/examples/).
+    3. Stop input-remapper from grabbing the Tartarus, and start openrazer-daemon.
+    4. systemctl --user enable --now tartarusd.service
+    If you installed by hand before, remove ~/.local/bin/tartarusd* and
+    ~/.config/systemd/user/tartarusd.service so they don't shadow the packaged ones.
+MSG
+}
+
+post_upgrade() {
+  echo '==> Restart the daemon to pick up the new version: systemctl --user restart tartarusd.service'
+}
