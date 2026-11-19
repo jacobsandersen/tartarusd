@@ -238,8 +238,12 @@ Methods:  ListProfiles() → as
           GetState() → (s profile, y mode, b pinned)
           SetMode(y)
           StartCapture() / StopCapture()
-Signals:  ProfileChanged(s)  ModeChanged(y)  KeyCaptured(s physical_key)
+Signals:  ProfileChanged(s)  ModeChanged(y)  ShiftChanged(b)  KeyCaptured(s physical_key)
 ```
+
+`ShiftChanged(true/false)` fires when Hypershift is entered/left (mode key held with
+another input / released), so a bar widget can show it. The core state machine will
+expose it as an effect when the D-Bus server is built (milestone 4).
 
 ## CLI (`crates/cli`) — `tartarusctl`
 
