@@ -4,8 +4,9 @@
 #   packaging/uninstall.sh
 #
 # Stops and disables the user service, then deletes the binaries, unit, desktop entry and
-# icons. Your config and profiles in ~/.config/tartarusd are kept. Uses the same PREFIX,
-# XDG_CONFIG_HOME and XDG_DATA_HOME as install.sh.
+# icons. Your config and profiles in ~/.config/tartarusd are kept. Steps that need root
+# (the udev rule) are printed, not run. Uses the same PREFIX, XDG_CONFIG_HOME and
+# XDG_DATA_HOME as install.sh.
 set -eu
 
 prefix=${PREFIX:-$HOME/.local}
@@ -43,8 +44,14 @@ if command -v systemctl >/dev/null 2>&1; then
 fi
 
 echo
-echo "Kept: $conf_dir (config and profiles)"
+echo "Kept: $conf_dir (config and profiles). To delete it too:"
+echo "  rm -r $conf_dir"
 if [ -e /etc/udev/rules.d/70-tartarusd.rules ]; then
-    echo "An old udev rule is still in /etc (the Arch package installs its own). Remove it with:"
-    echo "  sudo rm /etc/udev/rules.d/70-tartarusd.rules && sudo udevadm control --reload"
+    echo
+    echo "Undo the udev rule (needs root; skip if you are installing the Arch package, which has its own):"
+    echo "  sudo rm /etc/udev/rules.d/70-tartarusd.rules"
+    echo "  sudo udevadm control --reload"
+    echo "  sudo udevadm trigger --subsystem-match=input --subsystem-match=misc"
 fi
+echo
+echo "If you turned off input-remapper for the Tartarus, turn it back on."
