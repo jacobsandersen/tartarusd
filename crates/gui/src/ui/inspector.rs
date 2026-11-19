@@ -126,7 +126,7 @@ impl Ui {
         row.append(&drop);
         b.append(&row);
         b.append(&detail);
-        self.fill_detail(&detail, sel);
+        self.fill_detail(&detail, sel, kind_of(cur.as_ref()));
 
         let (ui, detail) = (Rc::clone(self), detail.clone());
         drop.connect_selected_notify(move |d| {
@@ -153,12 +153,12 @@ impl Ui {
             };
             ui.edit(|p| edit::set_binding(p, mode, layer, sel, action));
             clear(&detail);
-            ui.fill_detail(&detail, sel);
+            ui.fill_detail(&detail, sel, d.selected());
         });
     }
 
-    /// The part of the editor that depends on the kind of action.
-    fn fill_detail(self: &Rc<Self>, detail: &gtk::Box, sel: PhysicalKey) {
+    /// The part of the editor that depends on the kind of action (`kind` is the menu entry).
+    fn fill_detail(self: &Rc<Self>, detail: &gtk::Box, sel: PhysicalKey, kind: u32) {
         let (mode, layer, cur, modes) = {
             let st = self.st.borrow();
             let d = st.draft.as_ref();
@@ -169,16 +169,6 @@ impl Ui {
                     .cloned(),
                 d.map_or(1, |d| d.modes.len()),
             )
-        };
-        let kind = match &cur {
-            Some(a) => kind_of(Some(a)),
-            // Chord and macro kinds have no action until the text is valid.
-            None => self
-                .w
-                .inspector
-                .first_child()
-                .and_then(|_| find_dropdown(&self.w.inspector))
-                .map_or(0, |d| d.selected()),
         };
         match kind {
             3 => {
@@ -647,18 +637,6 @@ impl Ui {
             }
         });
     }
-}
-
-fn find_dropdown(b: &gtk::Box) -> Option<gtk::DropDown> {
-    let row = b.first_child()?.next_sibling()?.next_sibling()?;
-    let mut c = row.first_child();
-    while let Some(w) = c {
-        if let Ok(d) = w.clone().downcast::<gtk::DropDown>() {
-            return Some(d);
-        }
-        c = w.next_sibling();
-    }
-    None
 }
 
 fn drop_borrow<T>(_: T) {}
