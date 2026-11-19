@@ -28,6 +28,8 @@ pub enum EditError {
     BadLed,
     #[error("Remove modes to have 3 or fewer first")]
     TooManyForDefault,
+    #[error("The base layer has no lighting to copy")]
+    NothingToCopy,
 }
 
 pub fn binding(p: &Profile, mode: usize, layer: Layer, key: PhysicalKey) -> Option<&Action> {
@@ -153,6 +155,60 @@ pub fn update_effect(p: &mut Profile, mode: usize, layer: Layer, f: impl FnOnce(
     {
         f(e);
     }
+}
+
+/// `c` scaled to `pct` percent brightness (above 100 brightens, clamped at full).
+fn scale(c: Rgb, pct: u32) -> Rgb {
+    let ch = |v: u8| ((u32::from(v) * pct + 50) / 100).min(255) as u8;
+    Rgb(ch(c.0), ch(c.1), ch(c.2))
+}
+
+/// A copy of `light` with every color scaled to `pct` percent. Effects without colors
+/// (spectrum, wave, random breathing or starlight) are unchanged.
+pub fn scale_light(light: &Light, pct: u32) -> Light {
+    match light {
+        Light::Frame(f) => Light::Frame(Frame {
+            default: scale(f.default, pct),
+            keys: f.keys.iter().map(|(k, c)| (*k, scale(*c, pct))).collect(),
+        }),
+        Light::Effect(e) => Light::Effect(match e {
+            PadEffect::Breathing(c) => {
+                PadEffect::Breathing(c.iter().map(|c| scale(*c, pct)).collect())
+            }
+            PadEffect::Reactive { color, speed } => PadEffect::Reactive {
+                color: scale(*color, pct),
+                speed: *speed,
+            },
+            PadEffect::Starlight { colors, speed } => PadEffect::Starlight {
+                colors: colors.iter().map(|c| scale(*c, pct)).collect(),
+                speed: *speed,
+            },
+            other => other.clone(),
+        }),
+    }
+}
+
+/// Scale the colors of one layer's lighting in place.
+pub fn scale_layer(p: &mut Profile, mode: usize, layer: Layer, pct: u32) {
+    if let Some(l) = p
+        .modes
+        .get_mut(mode)
+        .and_then(|m| light_slot(m, layer).as_mut())
+    {
+        *l = scale_light(l, pct);
+    }
+}
+
+/// Make `to` a copy of `from`'s lighting, scaled to `pct` percent. `false` (nothing
+/// changed) if `from` has no lighting.
+pub fn copy_layer(p: &mut Profile, mode: usize, from: Layer, to: Layer, pct: u32) -> bool {
+    let Some(copy) = light(p, mode, from).map(|l| scale_light(l, pct)) else {
+        return false;
+    };
+    if let Some(m) = p.modes.get_mut(mode) {
+        *light_slot(m, to) = Some(copy);
+    }
+    true
 }
 
 /// The effect types the editor offers, in menu order.
@@ -499,6 +555,60 @@ mod tests {
         );
         set_kind(&mut p, 0, Layer::Base, LightKind::Off);
         assert!(!p.uses_lighting());
+    }
+
+    #[test]
+    fn copying_the_base_layer_dims_every_color_and_replaces_what_was_there() {
+        let mut p = blank("x");
+        let w = Key::from_name("KEY_W").unwrap();
+        assert!(
+            !copy_layer(&mut p, 0, Layer::Base, Layer::Hypershift, 50),
+            "nothing to copy"
+        );
+        set_kind(&mut p, 0, Layer::Base, LightKind::Keys);
+        set_default_color(&mut p, 0, Layer::Base, Rgb(100, 100, 100));
+        set_color(&mut p, 0, Layer::Base, w, Some(Rgb(255, 0, 51)));
+        // The Hypershift layer had something else; it is replaced.
+        set_kind(&mut p, 0, Layer::Hypershift, LightKind::Effect);
+        assert!(copy_layer(&mut p, 0, Layer::Base, Layer::Hypershift, 40));
+        validate(&p).unwrap();
+        let f = frame(&p, 0, Layer::Hypershift).unwrap();
+        assert_eq!(f.default, Rgb(40, 40, 40));
+        assert_eq!(
+            f.keys[&w],
+            Rgb(102, 0, 20),
+            "every key scaled, each channel on its own"
+        );
+        assert_eq!(
+            frame(&p, 0, Layer::Base).unwrap().default,
+            Rgb(100, 100, 100),
+            "the source is untouched"
+        );
+    }
+
+    #[test]
+    fn scaling_clamps_and_leaves_colorless_effects_alone() {
+        assert_eq!(scale(Rgb(200, 100, 0), 200), Rgb(255, 200, 0));
+        assert_eq!(scale(Rgb(255, 255, 255), 0), Rgb(0, 0, 0));
+        assert_eq!(scale(Rgb(255, 255, 255), 100), Rgb(255, 255, 255));
+        let wave = Light::Effect(PadEffect::Wave(Travel::Left));
+        assert_eq!(scale_light(&wave, 30), wave);
+        let star = Light::Effect(PadEffect::Starlight {
+            colors: vec![Rgb(200, 0, 0)],
+            speed: 3,
+        });
+        assert_eq!(
+            scale_light(&star, 50),
+            Light::Effect(PadEffect::Starlight {
+                colors: vec![Rgb(100, 0, 0)],
+                speed: 3
+            })
+        );
+        let mut p = blank("x");
+        set_kind(&mut p, 0, Layer::Base, LightKind::Keys);
+        set_default_color(&mut p, 0, Layer::Base, Rgb(100, 100, 100));
+        scale_layer(&mut p, 0, Layer::Base, 50);
+        assert_eq!(frame(&p, 0, Layer::Base).unwrap().default, Rgb(50, 50, 50));
     }
 
     #[test]

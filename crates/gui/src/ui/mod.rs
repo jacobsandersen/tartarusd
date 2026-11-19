@@ -64,6 +64,8 @@ pub struct Ui {
     /// Modifier keys held at the last press on the pad.
     pub mods: Cell<gtk::gdk::ModifierType>,
     pub pump: preview::Pump,
+    /// The color picker for the selected keys, so it can follow other edits.
+    pub key_picker: RefCell<Option<picker::Picker>>,
     pub w: Widgets,
 }
 
@@ -486,6 +488,7 @@ pub fn build(app: &adw::Application, dir: PathBuf) -> Rc<Ui> {
         building: Cell::new(false),
         mods: Cell::new(gtk::gdk::ModifierType::empty()),
         pump: preview::Pump::default(),
+        key_picker: RefCell::new(None),
         w,
     });
 

@@ -86,6 +86,7 @@ pub fn parse_hex(text: &str) -> Option<Rgb> {
     Rgb::from_str(&t).ok()
 }
 
+#[derive(Clone)]
 pub struct Picker {
     pub root: gtk::Box,
     inner: Rc<Inner>,

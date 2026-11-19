@@ -158,7 +158,9 @@ what it does (a key or chord you can record from the keyboard or type with compl
 The **Hypershift** toggle edits the layer used while the mode key is held, and the **Lighting**
 view paints per-key colors for each mode and layer: click a key, Ctrl-click to add more, or drag a
 box across the pad (Ctrl+A selects all), then pick a color. Colors apply as you drag the sliders,
-and Copy/Paste color (also Ctrl+C / Ctrl+V) moves a color between keys. With the daemon running,
+Copy/Paste color (also Ctrl+C / Ctrl+V) moves a color between keys, and on the Hypershift layer
+"Copy base layer lighting" starts it from the base layer's lighting at a lower brightness (a
+Brightness control scales any layer's colors). With the daemon running,
 the pad shows the lighting you are editing live, before you save. Mode tabs, profile LEDs, match rules,
 new/delete and **Import input-remapper preset** are all there. **Save** (Ctrl+S) writes the
 file atomically and the daemon reloads it.

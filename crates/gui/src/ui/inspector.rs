@@ -67,6 +67,7 @@ impl Ui {
 
     pub fn rebuild_inspector(self: &Rc<Self>) {
         self.cancel_recording();
+        self.key_picker.borrow_mut().take();
         clear(&self.w.inspector);
         let (sel, count, view, has_draft) = {
             let st = self.st.borrow();
@@ -371,6 +372,10 @@ impl Ui {
         });
         b.append(&list);
 
+        if layer == Layer::Hypershift {
+            self.copy_from_base(mode);
+        }
+
         if let Some(effect) = effect {
             self.effect_controls(mode, layer, &effect);
             return;
@@ -420,6 +425,7 @@ impl Ui {
             let ui = Rc::clone(self);
             let picker = picker::new(initial, move |c| ui.apply_color(Some(c)));
             b.append(&picker.root);
+            *self.key_picker.borrow_mut() = Some(picker.clone());
 
             let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
             let copy = gtk::Button::with_label("Copy color");
@@ -441,12 +447,34 @@ impl Ui {
         }
 
         let expander = gtk::Expander::new(Some("Default color"));
+        expander.set_expanded(keys.is_empty());
         let ui = Rc::clone(self);
         let default = picker::new(frame.default, move |c| {
             ui.edit(|p| edit::set_default_color(p, mode, layer, c));
+            // Keys that use the default changed color; keep the selected-keys picker honest.
+            ui.sync_key_picker();
         });
         expander.set_child(Some(&default.root));
         b.append(&expander);
+
+        let tools = gtk::ListBox::new();
+        tools.add_css_class("boxed-list");
+        tools.set_selection_mode(gtk::SelectionMode::None);
+        let pct = adw::SpinRow::with_range(10.0, 200.0, 10.0);
+        pct.set_title("Brightness");
+        pct.set_subtitle("Scale every color on this layer, in percent");
+        pct.set_value(100.0);
+        let apply = gtk::Button::with_label("Apply");
+        apply.set_valign(gtk::Align::Center);
+        pct.add_suffix(&apply);
+        tools.append(&pct);
+        let ui = Rc::clone(self);
+        apply.connect_clicked(move |_| {
+            let v = pct.value() as u32;
+            ui.edit(|p| edit::scale_layer(p, mode, layer, v));
+            ui.rebuild_inspector();
+        });
+        b.append(&tools);
     }
 
     /// Controls for a firmware effect: its type, direction, colors and speed.
@@ -576,6 +604,43 @@ impl Ui {
         b.append(&dim(
             "The pad runs this effect itself; there are no per-key colors.",
         ));
+    }
+
+    /// Show the selected keys' current color in their picker.
+    fn sync_key_picker(&self) {
+        if let (Some(p), Some(c)) = (self.key_picker.borrow().as_ref(), self.selected_color()) {
+            p.set(c);
+        }
+    }
+
+    /// "Start from the base layer": copy its lighting here, dimmed, as a starting point.
+    fn copy_from_base(self: &Rc<Self>, mode: usize) {
+        let list = gtk::ListBox::new();
+        list.add_css_class("boxed-list");
+        list.set_selection_mode(gtk::SelectionMode::None);
+        let pct = adw::SpinRow::with_range(5.0, 100.0, 5.0);
+        pct.set_title("Copy base layer lighting");
+        pct.set_subtitle("Replaces this layer's lighting. Brightness in percent");
+        pct.set_value(40.0);
+        let copy = gtk::Button::with_label("Copy");
+        copy.set_valign(gtk::Align::Center);
+        pct.add_suffix(&copy);
+        list.append(&pct);
+        let ui = Rc::clone(self);
+        copy.connect_clicked(move |_| {
+            let v = pct.value() as u32;
+            let done = ui.try_edit(|p| {
+                if edit::copy_layer(p, mode, Layer::Base, Layer::Hypershift, v) {
+                    Ok(())
+                } else {
+                    Err(edit::EditError::NothingToCopy)
+                }
+            });
+            if done {
+                ui.rebuild_inspector();
+            }
+        });
+        self.w.inspector.append(&list);
     }
 
     /// Set the color of the selected keys that have a light (`None`: the default color).
