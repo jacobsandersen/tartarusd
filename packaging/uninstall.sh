@@ -48,7 +48,7 @@ echo "Kept: $conf_dir (config and profiles). To delete it too:"
 echo "  rm -r $conf_dir"
 if [ -e /etc/udev/rules.d/70-tartarusd.rules ]; then
     echo
-    echo "Undo the udev rule (needs root; skip if you are installing the Arch package, which has its own):"
+    echo "Remove the udev rule (needs root):"
     echo "  sudo rm /etc/udev/rules.d/70-tartarusd.rules"
     echo "  sudo udevadm control --reload"
     echo "  sudo udevadm trigger --subsystem-match=input --subsystem-match=misc"
