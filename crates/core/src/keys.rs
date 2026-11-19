@@ -27,6 +27,9 @@ fn tables() -> &'static Tables {
 impl Key {
     /// The Tartarus hyper/mode key (`KEY_LEFTALT`) by default.
     pub const LEFTALT: Key = Key(56);
+    /// The D-pad's up and down (`KEY_UP`, `KEY_DOWN`).
+    pub const UP: Key = Key(103);
+    pub const DOWN: Key = Key(108);
 
     /// Look up a `KEY_*` / `BTN_*` name.
     pub fn from_name(name: &str) -> Option<Key> {

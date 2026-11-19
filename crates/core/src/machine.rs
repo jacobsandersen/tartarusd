@@ -64,6 +64,23 @@ enum ModeKeyState {
     Shifted(Shift),
 }
 
+/// How long each phase of the blinking profile LED lasts while a mode is being selected.
+const BLINK: Duration = Duration::from_millis(300);
+
+/// (`Select` only) a timed mode selection: D-pad up/down move `candidate`, a single tap of
+/// the mode key picks it, and silence cancels it.
+#[derive(Clone, Copy, Debug)]
+struct Select {
+    candidate: usize,
+    /// Cancelled when this passes; every navigation renews it.
+    deadline: Duration,
+    /// The LED is showing the candidate (otherwise it is in its dark phase).
+    lit: bool,
+    next_blink: Duration,
+    /// The mode key is down, since this time.
+    key_down: Option<Duration>,
+}
+
 /// A macro in flight. Its steps are performed by [`Machine::tick`].
 struct RunningMacro {
     steps: Arc<[Step]>,
@@ -93,6 +110,7 @@ pub struct Machine {
     /// (`DoubleTap` only) a quick first tap just ended; a second tap before this time
     /// completes the double tap. Any other input in between cancels it.
     first_tap_until: Option<Duration>,
+    select: Option<Select>,
     held: HashMap<PhysicalKey, Held>,
     /// Output keys currently down, with reference counts. Macro steps use the same
     /// counts as physical keys, so every down still has exactly one up.
@@ -109,6 +127,7 @@ impl Machine {
             mode: 0,
             mode_key: ModeKeyState::Idle,
             first_tap_until: None,
+            select: None,
             held: HashMap::new(),
             out: HashMap::new(),
             macros: Vec::new(),
@@ -122,6 +141,11 @@ impl Machine {
 
     pub fn is_shifted(&self) -> bool {
         matches!(self.mode_key, ModeKeyState::Shifted(_))
+    }
+
+    /// Whether a timed mode selection is open.
+    pub fn is_selecting(&self) -> bool {
+        self.select.is_some()
     }
 
     pub fn profile(&self) -> &Arc<Profile> {
@@ -159,6 +183,10 @@ impl Machine {
     pub fn handle(&mut self, now: Duration, ev: Event) -> Vec<Effect> {
         let mut fx = Vec::new();
         let mode_key = PhysicalKey::Key(self.cfg.mode_key);
+        if self.select.is_some() {
+            self.select_event(now, ev, &mut fx);
+            return fx;
+        }
         match ev {
             Event::Press(k) if k == mode_key => self.mode_key_down(now, &mut fx),
             Event::Release(k) if k == mode_key => self.mode_key_up(now, &mut fx),
@@ -171,6 +199,7 @@ impl Machine {
     /// Jump to a mode (D-Bus `SetMode`). Out-of-range is ignored.
     pub fn set_mode(&mut self, n: u8) -> Vec<Effect> {
         let mut fx = Vec::new();
+        self.end_select(&mut fx);
         self.change_mode(usize::from(n), &mut fx);
         fx
     }
@@ -198,6 +227,7 @@ impl Machine {
     /// a held mode key stays a held mode key.
     pub fn swap_profile(&mut self, profile: Arc<Profile>) -> Vec<Effect> {
         let mut fx = self.release_all();
+        self.select = None;
         if self.profile.remember_mode {
             self.remembered.insert(self.profile.name.clone(), self.mode);
         }
@@ -236,18 +266,38 @@ impl Machine {
                 &mut fx,
             );
         }
+        if let Some(sel) = &mut self.select {
+            if now >= sel.deadline {
+                self.end_select(&mut fx);
+            } else if now >= sel.next_blink {
+                sel.lit = !sel.lit;
+                sel.next_blink = now + BLINK;
+                let mask = if sel.lit {
+                    self.profile.modes[sel.candidate].led_mask
+                } else {
+                    0
+                };
+                fx.push(Effect::SetLed(mask));
+            }
+        }
         self.run_due(now, &mut fx);
         fx
     }
 
     /// When [`Machine::tick`] next has something to do: the mode key reaching the tap
-    /// term, or the next macro step.
+    /// term, the next blink or selection timeout, or the next macro step.
     pub fn next_deadline(&self) -> Option<Duration> {
         let promotion = match self.mode_key {
             ModeKeyState::Pending(t0) => Some(t0 + self.cfg.tap_term),
             _ => None,
         };
-        self.macros.iter().map(|m| m.due).chain(promotion).min()
+        let select = self.select.map(|s| s.next_blink.min(s.deadline));
+        self.macros
+            .iter()
+            .map(|m| m.due)
+            .chain(promotion)
+            .chain(select)
+            .min()
     }
 
     fn start_macro(&mut self, now: Duration, steps: Arc<[Step]>, fx: &mut Vec<Effect>) {
@@ -296,7 +346,7 @@ impl Machine {
         }
         match self.cfg.mode_switch {
             ModeSwitch::Tap => self.mode_key = ModeKeyState::Pending(now),
-            ModeSwitch::DoubleTap => {
+            ModeSwitch::DoubleTap | ModeSwitch::Select => {
                 // Hypershift shows at once. Whether this press is also a tap is decided
                 // on release.
                 let second = self.first_tap_until.take().is_some_and(|until| now < until);
@@ -331,8 +381,10 @@ impl Machine {
                 // A quick press-and-release with nothing else pressed is a tap. In
                 // `DoubleTap` mode the first arms the second; the second cycles the mode.
                 let quick = now.saturating_sub(s.since) < self.cfg.tap_term;
-                if self.cfg.mode_switch == ModeSwitch::DoubleTap && !s.used && quick {
-                    if s.second {
+                if self.cfg.mode_switch != ModeSwitch::Tap && !s.used && quick {
+                    if s.second && self.cfg.mode_switch == ModeSwitch::Select {
+                        self.begin_select(now, fx);
+                    } else if s.second {
                         let next = (self.mode + 1) % self.profile.modes.len();
                         self.change_mode(next, fx);
                     } else {
@@ -341,6 +393,69 @@ impl Machine {
                 }
             }
             ModeKeyState::Idle => {}
+        }
+    }
+
+    /// Open the timed selection, starting on the current mode. A profile with one mode has
+    /// nothing to choose, so the double tap does nothing there.
+    fn begin_select(&mut self, now: Duration, fx: &mut Vec<Effect>) {
+        if self.profile.modes.len() < 2 {
+            return;
+        }
+        self.select = Some(Select {
+            candidate: self.mode,
+            deadline: now + self.cfg.select_timeout,
+            lit: true,
+            next_blink: now + BLINK,
+            key_down: None,
+        });
+        fx.push(Effect::SetLed(self.led()));
+    }
+
+    /// Close the selection, if open, and show the real mode's LED again.
+    fn end_select(&mut self, fx: &mut Vec<Effect>) {
+        if self.select.take().is_some() {
+            fx.push(Effect::SetLed(self.led()));
+        }
+    }
+
+    /// While selecting, input steers the selection and nothing reaches the output.
+    fn select_event(&mut self, now: Duration, ev: Event, fx: &mut Vec<Effect>) {
+        let mode_key = PhysicalKey::Key(self.cfg.mode_key);
+        let n = self.profile.modes.len();
+        let Some(sel) = &mut self.select else { return };
+        match ev {
+            Event::Press(k) if k == mode_key => sel.key_down = Some(now),
+            Event::Release(k) if k == mode_key => {
+                let quick = sel
+                    .key_down
+                    .take()
+                    .is_some_and(|t| now.saturating_sub(t) < self.cfg.tap_term);
+                if quick {
+                    let pick = sel.candidate;
+                    self.select = None;
+                    if pick == self.mode {
+                        fx.push(Effect::SetLed(self.led()));
+                    } else {
+                        self.change_mode(pick, fx);
+                    }
+                }
+            }
+            Event::Press(k) => {
+                let step = if k == PhysicalKey::Key(Key::UP) {
+                    n - 1
+                } else if k == PhysicalKey::Key(Key::DOWN) {
+                    1
+                } else {
+                    return;
+                };
+                sel.candidate = (sel.candidate + step) % n;
+                sel.deadline = now + self.cfg.select_timeout;
+                sel.lit = true;
+                sel.next_blink = now + BLINK;
+                fx.push(Effect::SetLed(self.profile.modes[sel.candidate].led_mask));
+            }
+            Event::Release(_) => {}
         }
     }
 
@@ -1189,6 +1304,126 @@ type = "spectrum"
         assert_eq!(w_cell(frames(&fx)[0].as_ref().unwrap()), [16, 16, 16]);
         let back = release(&mut m, 50, "KEY_LEFTALT");
         assert_eq!(w_cell(frames(&back)[0].as_ref().unwrap()), [0, 255, 255]);
+    }
+
+    fn select_machine() -> Machine {
+        let cfg = Config {
+            mode_switch: ModeSwitch::Select,
+            select_timeout: ms(2000),
+            ..Config::default()
+        };
+        Machine::new(cfg, profile(PROFILE))
+    }
+
+    /// Two quick taps ending at `t + 150 + 50`, which open the selection.
+    fn open_select(m: &mut Machine, t: u64) -> Vec<Effect> {
+        quick_tap(m, t, 50);
+        quick_tap(m, t + 150, 50)
+    }
+
+    #[test]
+    fn select_double_tap_opens_a_blinking_selection_without_changing_mode() {
+        let mut m = select_machine();
+        let fx = open_select(&mut m, 0);
+        assert_eq!(fx, vec![Effect::ShiftChanged(false), Effect::SetLed(1)]);
+        assert!(m.is_selecting());
+        assert_eq!(m.mode(), 0);
+        // The LED goes dark, then shows the candidate again, until something happens.
+        assert_eq!(m.next_deadline(), Some(ms(200 + 300)));
+        assert_eq!(m.tick(ms(500)), vec![Effect::SetLed(0)]);
+        assert_eq!(m.tick(ms(800)), vec![Effect::SetLed(1)]);
+    }
+
+    #[test]
+    fn select_dpad_moves_the_candidate_and_a_tap_picks_it() {
+        let mut m = select_machine();
+        open_select(&mut m, 0);
+        assert_eq!(press(&mut m, 300, "KEY_DOWN"), vec![Effect::SetLed(2)]);
+        release(&mut m, 310, "KEY_DOWN");
+        assert_eq!(press(&mut m, 400, "KEY_DOWN"), vec![Effect::SetLed(4)]);
+        // Wraps both ways.
+        assert_eq!(press(&mut m, 500, "KEY_DOWN"), vec![Effect::SetLed(1)]);
+        assert_eq!(press(&mut m, 600, "KEY_UP"), vec![Effect::SetLed(4)]);
+        assert_eq!(m.mode(), 0, "nothing changes until the pick");
+        assert_eq!(press(&mut m, 700, "KEY_LEFTALT"), vec![]);
+        assert_eq!(
+            release(&mut m, 750, "KEY_LEFTALT"),
+            vec![Effect::ModeChanged(2), Effect::SetLed(4)]
+        );
+        assert_eq!(m.mode(), 2);
+        assert!(!m.is_selecting());
+    }
+
+    #[test]
+    fn select_picking_the_current_mode_just_stops_the_blink() {
+        let mut m = select_machine();
+        open_select(&mut m, 0);
+        press(&mut m, 300, "KEY_LEFTALT");
+        assert_eq!(release(&mut m, 340, "KEY_LEFTALT"), vec![Effect::SetLed(1)]);
+        assert!(!m.is_selecting());
+    }
+
+    #[test]
+    fn select_times_out_and_restores_the_led() {
+        let mut m = select_machine();
+        open_select(&mut m, 0); // opened at 200, times out at 2200
+        press(&mut m, 300, "KEY_DOWN"); // renews: 2300
+        assert_eq!(
+            m.tick(ms(2299))
+                .iter()
+                .filter(|e| matches!(e, Effect::SetLed(_)))
+                .count(),
+            1
+        );
+        assert!(m.is_selecting());
+        assert_eq!(m.tick(ms(2300)), vec![Effect::SetLed(1)]);
+        assert!(!m.is_selecting());
+        assert_eq!(m.mode(), 0);
+        assert_eq!(m.next_deadline(), None);
+    }
+
+    #[test]
+    fn select_swallows_other_keys_and_a_long_hold_does_not_pick() {
+        let mut m = select_machine();
+        open_select(&mut m, 0);
+        assert_eq!(press(&mut m, 300, "KEY_1"), vec![]);
+        assert_eq!(release(&mut m, 310, "KEY_1"), vec![]);
+        press(&mut m, 400, "KEY_DOWN");
+        press(&mut m, 500, "KEY_LEFTALT");
+        assert_eq!(release(&mut m, 500 + 400, "KEY_LEFTALT"), vec![]);
+        assert!(m.is_selecting());
+        assert_eq!(m.mode(), 0);
+    }
+
+    #[test]
+    fn select_is_not_offered_in_a_single_mode_profile_and_ends_on_swap() {
+        let one = profile("name='S'\n[mode.0]\n");
+        let cfg = Config {
+            mode_switch: ModeSwitch::Select,
+            ..Config::default()
+        };
+        let mut m = Machine::new(cfg, one);
+        open_select(&mut m, 0);
+        assert!(!m.is_selecting());
+
+        let mut m = select_machine();
+        open_select(&mut m, 0);
+        m.swap_profile(profile(PROFILE));
+        assert!(!m.is_selecting());
+        assert_eq!(press(&mut m, 5_000, "KEY_1"), vec![down("KEY_R")]);
+    }
+
+    #[test]
+    fn select_leaves_the_other_gestures_alone() {
+        // A single tap, a hold and Hypershift use behave as in `double_tap`.
+        let mut m = select_machine();
+        assert_eq!(quick_tap(&mut m, 0, 50), vec![Effect::ShiftChanged(false)]);
+        assert_eq!(m.mode(), 0);
+        press(&mut m, 5_000, "KEY_LEFTALT");
+        assert_eq!(press(&mut m, 5_010, "KEY_1"), vec![down("KEY_F1")]);
+        release(&mut m, 5_020, "KEY_1");
+        release(&mut m, 5_030, "KEY_LEFTALT");
+        assert!(!m.is_selecting());
     }
 
     struct Rng(u64);
