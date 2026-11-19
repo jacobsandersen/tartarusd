@@ -13,7 +13,7 @@ name = "Smoke test"
 
 [mode.0]
 KEY_1 = "KEY_A"
-KEY_2 = { macro = [["KEY_H", 0], ["KEY_I", 100]] }
+KEY_2 = { macro = ["KEY_H", "KEY_I 100"] }
 WHEEL_UP = "KEY_PAGEUP"
 WHEEL_DOWN = "KEY_PAGEDOWN"
 
