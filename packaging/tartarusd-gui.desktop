@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Tartarus Profiles
+Comment=Edit keymaps, Hypershift layers and lighting for the Razer Tartarus V2
+Exec=tartarusd-gui
+Icon=input-gaming
+Categories=Settings;HardwareSettings;
+Terminal=false
+StartupWMClass=org.tartarusd.Gui
