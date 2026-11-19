@@ -60,6 +60,7 @@ Decisions (2026-11-19):
 - Lighting writes never block the input path (separate task, latest-wins channel).
 - Profile TOML files are the single source of truth; the GUI writes files atomically,
   the daemon reloads them.
+- Arch packaging lives in `packaging/arch/PKGBUILD` (split packages, builds from the checkout).
 - Daemon runs as a `systemd --user` service with udev `uaccess`; never require root.
 - Check both feature configs: `cargo clippy --all-targets -- -D warnings` and
   `cargo clippy --all-targets --features tartarusd/hyprland -- -D warnings`.

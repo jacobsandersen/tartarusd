@@ -34,6 +34,22 @@ opt-in build feature (Hyprland is the first supported compositor).
 
 ## Install
 
+### Arch Linux (pacman)
+
+```sh
+cd packaging/arch && makepkg -si
+```
+
+This builds `tartarusd-git` (daemon, CLI, user unit, udev rule) and `tartarusd-gui-git` (the
+editor) from this checkout's committed HEAD, so pacman tracks the files and can remove them.
+It needs `rustup` (the repo pins a nightly toolchain) and network access while building, so it
+doesn't work in a clean chroot. Hyprland window switching is built in; run
+`TARTARUSD_FEATURES= makepkg -si` to leave it out. After installing, follow the notes pacman
+prints (re-plug the device, add a profile, `systemctl --user enable --now tartarusd`). The
+udev rule is installed by the package, so the `sudo install` step below isn't needed.
+
+### Any distribution
+
 ```sh
 packaging/install.sh                       # build and install to ~/.local
 packaging/install.sh --features hyprland   # ...with Hyprland window-based switching
@@ -130,7 +146,7 @@ The full format, the rules for each field, and the design behind them are in
 
 `tartarusd-gui` (installed with `--gui`, launcher "Tartarus Profiles") edits the same profile
 files without hand-editing: pick a profile, pick a mode, click a key on the drawn pad and choose
-what it does (a key or chord you can record from the keyboard, a macro, switch mode, disable).
+what it does (a key or chord you can record from the keyboard or type with completion: "shift" then Tab gives `KEY_LEFTSHIFT`; a macro; switch mode; disable).
 The **Hypershift** toggle edits the layer used while the mode key is held, and the **Lighting**
 view paints per-key colors for each mode and layer. Mode tabs, profile LEDs, match rules,
 new/delete and **Import input-remapper preset** are all there. **Save** (Ctrl+S) writes the
