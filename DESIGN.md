@@ -167,6 +167,26 @@ Global config (`~/.config/tartarusd/config.toml`): device match, `mode_key`,
   and `/dev/uinput` with `uaccess`. No root.
 - **Shutdown:** release all held keys, ungrab, destroy uinput device.
 
+## Macros
+
+A macro is a list of steps (`key`, `down`/`up`, `delay_ms` before the step), run by the
+state machine itself: `Machine::tick(now)` performs steps that are due, and
+`next_deadline()` tells the daemon when to wake. There is no separate task or timer
+thread, so macros are deterministic under test and cancellation is trivial.
+
+- A macro starts on key-**down**; releasing the physical key does nothing. A zero-delay
+  first step runs inside the press itself (no added latency).
+- Steps use the same reference-counted output as physical keys, so overlapping macros
+  and held keys can never produce a double press or an orphaned release.
+- Macros must be **balanced** (validated at load): every key pressed is released by the
+  end, none is pressed twice, and none is released without being pressed. Max 512 steps.
+- Several macros can run at once (cap 32; further presses are ignored).
+- Profile swap, capture start and shutdown **cancel** running macros and release their
+  keys. Changing mode does not.
+- If a tick is late, due steps run in order and the next delay counts from the actual
+  tick time, so a stall never produces a burst of back-to-back steps.
+- Not supported yet: repeat-while-held, and macros that run another action.
+
 ## Mode key: tap = next mode, hold = Hypershift
 
 One physical key (`KEY_LEFTALT`, the hyper/mode key) does both jobs, decided by
@@ -323,7 +343,7 @@ Key crates: `evdev` (read + uinput `VirtualDevice`), `zbus`, `serde` + `toml`,
 3. **profiles + reload** — profiles dir, inotify reload, atomic swap.
 4. **D-Bus + CLI.**
 5. **Window sources + opt-in `hyprland` feature** (auto-switch). Done.
-6. **Macros + hypershift layer.**
+6. **Macros + hypershift layer.** Done (Hypershift landed with the core state machine).
 6b. **Per-key lighting** — frames per mode and per Hypershift layer.
 7. **GUI** (incl. per-key color editing on the same layout widget).
 8. **input-remapper importer.**
