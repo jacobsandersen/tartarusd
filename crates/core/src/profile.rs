@@ -9,7 +9,8 @@ use serde::Deserialize;
 
 use crate::{
     action::{Action, ActionError},
-    keys::PhysicalKey,
+    keys::{Key, PhysicalKey},
+    lighting::{self, Frame, Rgb},
     window::ActiveWindow,
 };
 
@@ -87,6 +88,10 @@ pub struct Mode {
     pub led_mask: u8,
     pub bindings: Layer,
     pub hypershift: Option<Layer>,
+    /// Static per-key colors while this mode is active.
+    pub lighting: Option<Frame>,
+    /// Colors while Hypershift is held. `None` keeps the mode's own frame.
+    pub hypershift_lighting: Option<Frame>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -97,6 +102,16 @@ pub struct Profile {
     pub remember_mode: bool,
     /// Opt-in to more than 3 modes.
     pub extended_modes: bool,
+}
+
+impl Profile {
+    /// Whether this profile drives the per-key matrix at all. A profile without any
+    /// `lighting` leaves the pad's own lighting alone.
+    pub fn uses_lighting(&self) -> bool {
+        self.modes
+            .iter()
+            .any(|m| m.lighting.is_some() || m.hypershift_lighting.is_some())
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -152,6 +167,15 @@ pub enum ProfileError {
         "[[match]] #{index} needs `class` or `title_regex`; an empty rule would match every window"
     )]
     EmptyMatchRule { index: usize },
+    #[error("mode.{mode}{layer}: `{key}`: {reason}")]
+    Lighting {
+        mode: usize,
+        layer: &'static str,
+        key: String,
+        reason: String,
+    },
+    #[error("mode.{mode}{layer} must be a table")]
+    LightingNotTable { mode: usize, layer: &'static str },
     #[error("mode.{mode}.hypershift must be a table")]
     HypershiftNotTable { mode: usize },
 }
@@ -274,6 +298,8 @@ impl Profile {
 fn parse_mode(i: usize, table: toml::Table) -> Result<Mode, ProfileError> {
     let mut led_mask = None;
     let mut hypershift = None;
+    let mut lighting = None;
+    let mut hypershift_lighting = None;
     let mut rest = toml::Table::new();
     for (k, v) in table {
         match k.as_str() {
@@ -294,6 +320,22 @@ fn parse_mode(i: usize, table: toml::Table) -> Result<Mode, ProfileError> {
                 };
                 hypershift = Some(parse_layer(i, ".hypershift", t)?);
             }
+            "lighting" | "hypershift_lighting" => {
+                let layer = if k == "lighting" {
+                    ".lighting"
+                } else {
+                    ".hypershift_lighting"
+                };
+                let toml::Value::Table(t) = v else {
+                    return Err(ProfileError::LightingNotTable { mode: i, layer });
+                };
+                let frame = parse_frame(i, layer, t)?;
+                if k == "lighting" {
+                    lighting = Some(frame);
+                } else {
+                    hypershift_lighting = Some(frame);
+                }
+            }
             _ => {
                 rest.insert(k, v);
             }
@@ -303,7 +345,43 @@ fn parse_mode(i: usize, table: toml::Table) -> Result<Mode, ProfileError> {
         led_mask: led_mask.unwrap_or(DEFAULT_LED_MASKS[i]),
         bindings: parse_layer(i, "", rest)?,
         hypershift,
+        lighting,
+        hypershift_lighting,
     })
+}
+
+/// `default = "#rrggbb"` plus `KEY_X = "#rrggbb"` for keys that have an LED.
+fn parse_frame(
+    mode: usize,
+    layer: &'static str,
+    table: toml::Table,
+) -> Result<Frame, ProfileError> {
+    let err = |key: &str, reason: String| ProfileError::Lighting {
+        mode,
+        layer,
+        key: key.to_owned(),
+        reason,
+    };
+    let mut frame = Frame::default();
+    for (name, value) in table {
+        let rgb: Rgb = value
+            .as_str()
+            .ok_or_else(|| err(&name, "expected a color string like \"#00ffff\"".into()))?
+            .parse()
+            .map_err(|e: lighting::BadColor| err(&name, e.to_string()))?;
+        if name == "default" {
+            frame.default = rgb;
+            continue;
+        }
+        let key: Key = name
+            .parse()
+            .map_err(|_| err(&name, "unknown key name".into()))?;
+        if lighting::cell(key).is_none() {
+            return Err(err(&name, "this key has no LED".into()));
+        }
+        frame.keys.insert(key, rgb);
+    }
+    Ok(frame)
 }
 
 fn parse_layer(
@@ -518,6 +596,44 @@ led_mask = 2
         assert!(matches!(
             err("name='x'\n[mode.0]\nKEY_A = 'KEY_B'\nKEY_A = 'KEY_C'\n"),
             ProfileError::Toml(_)
+        ));
+    }
+
+    #[test]
+    fn parses_lighting_frames() {
+        let p = Profile::from_toml(
+            "name='x'\n[mode.0]\nKEY_1='KEY_A'\n[mode.0.lighting]\ndefault='#000000'\nKEY_W='#00ffff'\n\
+             [mode.0.hypershift_lighting]\nKEY_1='#ff0000'\n[mode.1]\n",
+        )
+        .unwrap();
+        assert!(p.uses_lighting());
+        let l = p.modes[0].lighting.as_ref().unwrap();
+        assert_eq!(l.keys[&Key::from_name("KEY_W").unwrap()], Rgb(0, 255, 255));
+        assert_eq!(
+            p.modes[0].hypershift_lighting.as_ref().unwrap().default,
+            Rgb(0, 0, 0)
+        );
+        assert!(p.modes[1].lighting.is_none(), "unlit modes stay unset");
+        // Lighting tables are not key bindings.
+        assert_eq!(p.modes[0].bindings.len(), 1);
+        assert!(
+            !Profile::from_toml("name='x'\n[mode.0]\n")
+                .unwrap()
+                .uses_lighting()
+        );
+    }
+
+    #[test]
+    fn lighting_errors_name_the_key() {
+        let e = |t: &str| err(&format!("name='x'\n[mode.0]\n[mode.0.lighting]\n{t}")).to_string();
+        assert!(e("KEY_W = 'red'").contains("KEY_W"));
+        assert!(e("KEY_UP = '#ffffff'").contains("no LED"));
+        assert!(e("KEY_LEFTALT = '#ffffff'").contains("no LED"));
+        assert!(e("KEY_NOPE = '#ffffff'").contains("unknown key"));
+        assert!(e("KEY_W = 5").contains("color string"));
+        assert!(matches!(
+            err("name='x'\n[mode.0]\nlighting = 'x'\n"),
+            ProfileError::LightingNotTable { .. }
         ));
     }
 
