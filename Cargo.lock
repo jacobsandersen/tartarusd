@@ -1169,7 +1169,7 @@ checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 
 [[package]]
 name = "tartarusctl"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1183,7 +1183,7 @@ dependencies = [
 
 [[package]]
 name = "tartarusd"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1202,7 +1202,7 @@ dependencies = [
 
 [[package]]
 name = "tartarusd-core"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "regex",
  "serde",
@@ -1213,7 +1213,7 @@ dependencies = [
 
 [[package]]
 name = "tartarusd-gui"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -1230,7 +1230,7 @@ dependencies = [
 
 [[package]]
 name = "tartarusd-ipc"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "zbus",
 ]
