@@ -9,6 +9,7 @@ mod keypad;
 mod picker;
 mod preview;
 mod selection;
+mod settings;
 mod sidebar;
 
 use std::{
@@ -555,6 +556,9 @@ fn content_page(ui: &Rc<Ui>) -> adw::NavigationPage {
     menu.append(Some("Pin in daemon"), Some("win.pin"));
     menu.append(Some("Unpin"), Some("win.unpin"));
     menu.append(Some("Delete profile…"), Some("win.delete"));
+    let general = gio::Menu::new();
+    general.append(Some("Settings…"), Some("win.settings"));
+    menu.append_section(None, &general);
     let mb = gtk::MenuButton::builder()
         .icon_name("open-menu-symbolic")
         .menu_model(&menu)
@@ -612,6 +616,7 @@ fn install_actions(ui: &Rc<Ui>) {
     add(ui, "delete", Ui::delete_dialog);
     add(ui, "pin", |u| u.pin(true));
     add(ui, "unpin", |u| u.pin(false));
+    add(ui, "settings", Ui::settings_dialog);
 }
 
 impl Ui {

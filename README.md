@@ -205,6 +205,10 @@ shows the choice), and one tap of the mode key picks it. If nothing is pressed f
 `select_timeout_ms` (default 4000), the selection is cancelled and the mode is unchanged.
 Other keys do nothing while it is open. It is not offered in a profile with one mode.
 
+The editor's menu has **Settings…** for these options (and the Hypershift ones). It edits
+`config.toml` in place, keeping your comments, then offers to restart the daemon with
+`systemctl --user restart tartarusd.service`.
+
 All options, with their defaults, are in
 [`packaging/config.example.toml`](packaging/config.example.toml). The config is read at
 startup, so restart the service after editing it.
