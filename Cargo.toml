@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/daemon", "crates/cli"]
+members = ["crates/core", "crates/ipc", "crates/daemon", "crates/cli"]
 # crates/gui is added at milestone 7 (GTK4 deps not needed before then).
 
 [workspace.package]

@@ -1,0 +1,10 @@
+[package]
+name = "tartarusd-ipc"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+zbus = "6.3.0"
+
+[lints]
+workspace = true

@@ -714,6 +714,7 @@ dependencies = [
  "evdev",
  "notify",
  "tartarusd-core",
+ "tartarusd-ipc",
  "tempfile",
  "thiserror",
  "tokio",
@@ -729,6 +730,13 @@ dependencies = [
  "serde",
  "thiserror",
  "toml",
+]
+
+[[package]]
+name = "tartarusd-ipc"
+version = "0.1.0"
+dependencies = [
+ "zbus",
 ]
 
 [[package]]
