@@ -8,6 +8,7 @@ pub mod lighting;
 pub mod machine;
 pub mod profile;
 pub mod profile_set;
+mod serialize;
 pub mod window;
 
 pub use action::{Action, ActionError, Step};
