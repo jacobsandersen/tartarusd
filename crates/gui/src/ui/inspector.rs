@@ -542,7 +542,7 @@ impl Ui {
         if let Some((max, current)) = max_speed {
             let speed = adw::SpinRow::with_range(1.0, f64::from(max), 1.0);
             speed.set_title("Speed");
-            speed.set_subtitle(&format!("1 to {max}"));
+            speed.set_subtitle(&format!("1 is fastest, {max} is slowest"));
             speed.set_value(f64::from(current));
             let ui = Rc::clone(self);
             speed.connect_value_notify(move |s| {

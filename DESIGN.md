@@ -329,7 +329,7 @@ animation was considered and dropped).
 [mode.1.effect]                 # or [mode.1.hypershift_effect]
 type = "starlight"              # spectrum | wave | breathing | reactive | starlight
 colors = ["#ff00ff", "#00ffff"] # breathing, starlight: 0 (random), 1 or 2 colors
-speed = 2                       # reactive 1-4, starlight 1-3 (default 2)
+speed = 2                       # reactive 1-4, starlight 1-3; 1 is fastest (default 2)
 ```
 
 - `wave` takes `direction = "left" | "right"` (the way it travels; default left).

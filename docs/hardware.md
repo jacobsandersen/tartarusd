@@ -92,13 +92,13 @@ speed last**.
 | Static | `setStatic(r,g,b)` | works |
 | Spectrum | `setSpectrum()` | works (rainbow cycle) |
 | Wave | `setWave(1)` / `setWave(2)` | 1 = right to left, 2 = left to right (OpenRazer's docstring says the opposite; the pad wins) |
-| Breathing | `setBreathSingle(r,g,b)`, `setBreathDual(r1,g1,b1,r2,g2,b2)`, `setBreathRandom()` | works (no speed setting) |
-| Reactive | `setReactive(r,g,b,speed)` | the pressed key lights and fades; speed 1..=4 (other values become 4) |
-| Starlight | `setStarlightSingle(r,g,b,speed)`, `setStarlightDual(r1,g1,b1,r2,g2,b2,speed)`, `setStarlightRandom(speed)` | works |
+| Breathing | `setBreathSingle(r,g,b)`, `setBreathDual(r1,g1,b1,r2,g2,b2)`, `setBreathRandom()` | works, no speed setting; dual goes red then blue (the cycle is slow, over 6 s) |
+| Reactive | `setReactive(r,g,b,speed)` | verified: the pressed key lights in the given color and fades; speed 1..=4 (other values become 4); **1 is fastest, 4 slowest** |
+| Starlight | `setStarlightSingle(r,g,b,speed)`, `setStarlightDual(r1,g1,b1,r2,g2,b2,speed)`, `setStarlightRandom(speed)` | verified colors (single and dual); speed 1..=3, **1 is fastest, 3 slowest** (3 is calm) |
 | None | `setNone()` | works |
 
-- Colors and speed of the first reactive/starlight run were sent in the wrong order, so
-  those two are re-checked with the corrected probe (speed direction, colors).
+- The first probe run sent reactive and starlight speed before the colors (wrong order); the
+  corrected probe confirmed the colors and speeds above.
 - Every `set*` effect call overwrites the effect OpenRazer remembers, so
   `restoreLastEffect` after one would restore **ours**. The daemon reads the configured
   effect (`getEffect`, `getEffectColors`, `getEffectSpeed`, `getWaveDir`) before its first
