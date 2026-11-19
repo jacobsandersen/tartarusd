@@ -196,22 +196,28 @@ One physical key (`KEY_LEFTALT`, the hyper/mode key) does both jobs, decided by
             mode key ↓
   Idle ───────────────────► Pending(t0)
    ▲                          │
-   │   other input ↓          │  mode key ↑
-   │   (key, wheel, button)   │
-   │          ▼               ▼
-   │      Shifted        dt = now − t0
-   │   (lookup in        dt ≤ tap_term → NextMode (+ LED)
-   │    hypershift        dt >  tap_term → cancel (no-op)
-   │    layer)                │
+   │   other input ↓          │  mode key ↑            held until t0 + tap_term
+   │   (key, wheel, button)   │                        with nothing else pressed
+   │          ▼               ▼                                │
+   │      Shifted        dt = now − t0                         │
+   │   (lookup in        dt <  tap_term → NextMode (+ LED)     │
+   │    hypershift        dt >= tap_term → cancel (no-op)      │
+   │    layer)                │                                │
+   │          ▲───────────────┼────────────────────────────────┘
    │          │ mode key ↑    │
    └──────────┴───────────────┘
 ```
 
-- The mode key never emits anything itself, so the decision is lazy and costs
-  **zero latency**: the first other input while held commits to Hypershift
-  immediately; tap is decided on release.
-- `tap_term` (default 350 ms; 200 ms proved too tight in practice) only separates a deliberate tap from a long
-  press-and-release with no other key (cancel).
+- The mode key never emits anything itself, so the decision costs **zero latency**:
+  the first other input while held commits to Hypershift immediately, and a tap is
+  decided on release.
+- A hold also commits **by time**: once the key has been held for `tap_term` with
+  nothing else pressed, a timer promotes it to Hypershift, so the LED, lighting and
+  `ShiftChanged` signal show it without needing another key. Releasing a promoted hold
+  never changes the mode. (A short tap can't flicker into Hypershift, because promotion
+  only happens after `tap_term`.)
+- `tap_term` (default 350 ms; 200 ms proved too tight in practice) is the boundary:
+  released **before** it is a tap, at or after it is a hold.
 - Hypershift **never changes `mode`** and never touches the mode LED state; it
   reads `modes[mode].hypershift`.
 - Unmapped keys in the Hypershift layer fall through to `modes[mode].bindings`
