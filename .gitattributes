@@ -1,0 +1,2 @@
+# trail tooling, not project code: keep it out of the language stats
+.trail/** linguist-vendored
