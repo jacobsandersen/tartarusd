@@ -4,6 +4,10 @@ Documentation=https://github.com/jacobsandersen/tartarusd
 # OpenRazer is required: LEDs go through its D-Bus API.
 Wants=openrazer-daemon.service
 After=openrazer-daemon.service
+# Start with the graphical session, after the compositor is up and has exported its
+# environment: window-based auto-switching detects the compositor once, at startup.
+PartOf=graphical-session.target
+After=graphical-session.target
 
 [Service]
 ExecStart=%h/.local/bin/tartarusd
@@ -11,4 +15,4 @@ Restart=on-failure
 RestartSec=2
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target

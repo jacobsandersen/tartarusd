@@ -76,6 +76,9 @@ anything. Then:
    systemctl --user enable --now tartarusd.service
    journalctl --user -u tartarusd -f      # logs
    ```
+   The unit starts with `graphical-session.target` (after the compositor is up, and after
+   `openrazer-daemon`). If an older install enabled it under `default.target`, run
+   `systemctl --user reenable tartarusd.service` to move it.
 
 To remove a manual install: `packaging/uninstall.sh` (keeps `~/.config/tartarusd`).
 
@@ -251,7 +254,7 @@ active.
 | `creating uinput devices` fails | Your user can't open `/dev/uinput`. Install the udev rule and re-trigger, or log in again. |
 | `claiming org.tartarusd.Daemon1 ... another tartarusd running?` | A second instance is running; stop it first. |
 | `tartarusctl: tartarusd is not running` | The daemon isn't on the session bus. Check `systemctl --user status tartarusd`. |
-| Profiles don't switch with the window | The daemon was built without `--features hyprland`, or isn't seeing Hyprland (check the startup log line `window source active`). |
+| Profiles don't switch with the window | The daemon was built without `--features hyprland`, or isn't seeing Hyprland (check the startup log line `window source active`; `Hyprland was not detected` means it started too early). The unit starts with `graphical-session.target`, which a compositor launched without a session manager such as uwsm never reaches, so the service wouldn't start at all there. Start the compositor through your session manager, or start the unit from the compositor's config (for Hyprland, `exec-once = systemctl --user start tartarusd.service`; it detects the compositor only once, at startup). |
 
 If the daemon ever misbehaves, `systemctl --user stop tartarusd` releases the device
 immediately, and the Tartarus goes back to behaving as a plain keyboard.
