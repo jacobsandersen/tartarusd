@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/jacobsandersen/tartarusd/compare/v0.4.1...v0.4.2) (2026-11-20)
+
+
+### Bug Fixes
+
+* start the user service with the graphical session ([#12](https://github.com/jacobsandersen/tartarusd/issues/12)) ([0f9c4c0](https://github.com/jacobsandersen/tartarusd/commit/0f9c4c004ef0d4770af0dd45b656ed81f8aecde0))
+
 ## [0.4.1](https://github.com/jacobsandersen/tartarusd/compare/v0.4.0...v0.4.1) (2026-11-19)
 
 
